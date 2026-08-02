@@ -34,6 +34,12 @@ async def call_tool(name: str, args: dict[str, Any] | None = None) -> dict[str, 
 async def _dispatch(name: str, args: dict[str, Any]) -> dict[str, Any]:
     if name == "doctor":
         return await _doctor(args)
+    if name == "doctor.preflight":
+        return _doctor_preflight(args)
+    if name == "doctor.fix":
+        return _doctor_fix(args)
+    if name == "doctor.catalog":
+        return _doctor_catalog(args)
     if name == "explore":
         return await _explore(args)
     if name == "capture":
@@ -112,7 +118,48 @@ async def _dispatch(name: str, args: dict[str, Any]) -> dict[str, Any]:
     return _err(f"unknown tool: {name}", available=[t["name"] for t in TOOL_SPECS])
 
 
+def _doctor_preflight(args: dict[str, Any]) -> dict[str, Any]:
+    from easy_rev.core.deps import preflight
+
+    return preflight(
+        args.get("platform") or "all",
+        path=args.get("path"),
+        include_optional=bool(args.get("include_optional", True)),
+    )
+
+
+def _doctor_fix(args: dict[str, Any]) -> dict[str, Any]:
+    from easy_rev.core.deps import fix_deps
+
+    ids = args.get("ids")
+    if isinstance(ids, str):
+        ids = [x.strip() for x in ids.split(",") if x.strip()]
+    return fix_deps(
+        ids if isinstance(ids, list) else None,
+        platform=args.get("platform") or "all",
+        allow_system=bool(args.get("allow_system", False)),
+        dry_run=bool(args.get("dry_run", False)),
+        timeout_s=float(args.get("timeout_s") or 600),
+    )
+
+
+def _doctor_catalog(args: dict[str, Any]) -> dict[str, Any]:
+    from easy_rev.core.deps import catalog_public
+
+    items = catalog_public()
+    platform = args.get("platform")
+    if platform and platform != "all":
+        items = [
+            i
+            for i in items
+            if platform in (i.get("platforms") or []) or "all" in (i.get("platforms") or [])
+        ]
+    return _ok(deps=items, count=len(items))
+
+
 async def _doctor(args: dict[str, Any]) -> dict[str, Any]:
+    from easy_rev.core.deps import preflight
+
     which = (args.get("platform") or "all").lower()
     platforms = {
         "web": Platform.WEB,
@@ -142,25 +189,28 @@ async def _doctor(args: dict[str, Any]) -> dict[str, Any]:
         except Exception as e:  # noqa: BLE001
             result["platforms"][key] = {"error": str(e)}
 
-    # Structured install hints for missing optional deps
-    from easy_rev.core.result import install_hints
+    # Unified preflight (catalog-driven readiness + fixable list)
+    pf = preflight(which, path=args.get("path"), include_optional=bool(args.get("include_optional", True)))
+    # merge score/ready into platform blocks
+    for key, pinfo in (pf.get("platforms") or {}).items():
+        if key in result["platforms"] and isinstance(result["platforms"][key], dict):
+            result["platforms"][key]["score"] = pinfo.get("score")
+            result["platforms"][key]["ready"] = pinfo.get("ready")
+            result["platforms"][key]["preflight_missing"] = pinfo.get("missing")
+            result["platforms"][key]["preflight_present"] = pinfo.get("present")
+            result["platforms"][key]["checks"] = pinfo.get("checks")
+        else:
+            result["platforms"][key] = pinfo
 
-    missing: list[str] = []
-    web = result["platforms"].get("web") or {}
-    if not web.get("camoufox_installed"):
-        missing.append("camoufox")
-    if not web.get("curl_cffi_installed"):
-        missing.append("curl_cffi")
-    frida_seen = False
-    for key in ("windows", "macos", "android", "ios"):
-        pinfo = result["platforms"].get(key) or {}
-        if pinfo.get("frida") is False and not frida_seen:
-            missing.append("frida")
-            frida_seen = True
-        if key == "android" and pinfo.get("androguard") is False:
-            missing.append("androguard")
-    result["missing"] = missing
-    result["install_hints"] = install_hints(missing)
+    result["ready"] = pf.get("ready")
+    result["missing"] = list(pf.get("missing_required") or []) + list(pf.get("missing_recommended") or [])
+    result["missing_required"] = pf.get("missing_required") or []
+    result["missing_recommended"] = pf.get("missing_recommended") or []
+    result["missing_optional"] = pf.get("missing_optional") or []
+    result["fixable"] = pf.get("fixable") or []
+    result["install_hints"] = pf.get("install_hints") or []
+    result["next_steps"] = pf.get("next_steps") or []
+    result["summary"] = pf.get("summary") or {}
     result["status_legend"] = {
         "attached": "live browser/Frida session",
         "dry_run": "optional dep missing; contract ok, not attached",
@@ -169,6 +219,10 @@ async def _doctor(args: dict[str, Any]) -> dict[str, Any]:
         "error": "attempted and failed",
         "static": "static-only analysis",
     }
+    result["ai_hint"] = (
+        "To auto-install fixable Python deps: easy-rev doctor --fix"
+        " or ai call doctor.fix -i '{\"ids\":[\"frida\",\"camoufox\"]}'"
+    )
     return result
 
 
@@ -189,22 +243,49 @@ def _target_from_args(args: dict[str, Any]) -> TargetSpec:
 
 
 async def _explore(args: dict[str, Any]) -> dict[str, Any]:
+    from easy_rev.core.deps import preflight
+
     target = _target_from_args(args)
     adapter = get_adapter(target.platform)
+    # Preflight snapshot (non-blocking) so AI sees missing tools before/with explore
+    plat = target.platform.value
+    path_hint = None
+    if plat == "web":
+        path_hint = "browser"
+    elif plat in {"android", "ios"} and (args.get("package") or args.get("attach", True)):
+        path_hint = "dynamic"
+    elif plat in {"windows", "macos"} and (args.get("process") or args.get("attach", True)):
+        path_hint = "dynamic"
+    else:
+        path_hint = "static"
+    pf = preflight(plat, path=path_hint)
+
     # pass through remaining kwargs
     kwargs = {k: v for k, v in args.items() if k not in {"platform"}}
     result = await adapter.explore(target, **kwargs)
-    return {
+    out = {
         "ok": result.ok,
         "platform": result.platform,
         "target": result.target,
         "recommendation": result.recommendation,
         "risk": result.risk,
         "artifacts": [a.model_dump() for a in result.artifacts],
-        "findings": result.findings,
+        "findings": result.findings or {},
         "error": result.error,
         "message": result.message,
+        "preflight": {
+            "path": path_hint,
+            "ready": pf.get("ready"),
+            "score": ((pf.get("platforms") or {}).get(plat) or {}).get("score"),
+            "missing": ((pf.get("platforms") or {}).get(plat) or {}).get("missing"),
+            "fixable": pf.get("fixable"),
+            "install_hints": pf.get("install_hints"),
+            "next_steps": pf.get("next_steps"),
+        },
     }
+    if isinstance(out["findings"], dict):
+        out["findings"] = {**out["findings"], "preflight_ready": pf.get("ready")}
+    return out
 
 
 async def _capture(args: dict[str, Any]) -> dict[str, Any]:

@@ -96,4 +96,23 @@ def probe_mobile_toolchain(platform: Platform) -> dict[str, Any]:
     except Exception:  # noqa: BLE001
         info["androguard"] = False
 
+    from easy_rev.core.deps import preflight
+
+    key = "android" if platform is Platform.ANDROID else "ios"
+    pf = preflight(key)
+    block = (pf.get("platforms") or {}).get(key) or {}
+    info["ready"] = block.get("ready")
+    info["score"] = block.get("score")
+    info["missing"] = block.get("missing")
+    info["install_hints"] = pf.get("install_hints") or []
+    info["capabilities"] = {
+        "static_apk": platform is Platform.ANDROID,
+        "static_ipa": platform is Platform.IOS or True,
+        "dynamic": bool(info["frida"]),
+        "adb": bool(info["tools"].get("adb", {}).get("available")),
+        "device_count": len(info.get("devices") or []),
+        "frida_device_count": len(info.get("frida_devices") or []),
+        "androguard": bool(info.get("androguard")),
+    }
+    info["next_steps"] = pf.get("next_steps") or []
     return info

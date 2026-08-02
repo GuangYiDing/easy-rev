@@ -7,7 +7,7 @@ from typing import Any
 TOOL_SPECS: list[dict[str, Any]] = [
     {
         "name": "doctor",
-        "description": "Report environment health across web / desktop / mobile toolchains.",
+        "description": "Full environment doctor: per-platform toolchain + preflight score/missing/fixable.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -15,8 +15,54 @@ TOOL_SPECS: list[dict[str, Any]] = [
                     "type": "string",
                     "description": "Optional: web|windows|macos|android|ios|all",
                     "default": "all",
-                }
+                },
+                "path": {
+                    "type": "string",
+                    "description": "Optional capability filter: static|dynamic|browser|tls|frida|device|...",
+                },
+                "include_optional": {"type": "boolean", "default": True},
             },
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "doctor.preflight",
+        "description": "RE preflight checks only (readiness score, missing deps, install hints).",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "platform": {"type": "string", "default": "all"},
+                "path": {"type": "string"},
+                "include_optional": {"type": "boolean", "default": True},
+            },
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "doctor.fix",
+        "description": "Auto-install fixable deps (pip extras + camoufox fetch). brew only if allow_system.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "ids": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Dep ids e.g. frida,camoufox; omit to fix all fixable missing",
+                },
+                "platform": {"type": "string", "default": "all"},
+                "allow_system": {"type": "boolean", "default": False},
+                "dry_run": {"type": "boolean", "default": False},
+                "timeout_s": {"type": "number"},
+            },
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "doctor.catalog",
+        "description": "List known RE dependency catalog (detect + install recipes).",
+        "input_schema": {
+            "type": "object",
+            "properties": {"platform": {"type": "string"}},
             "additionalProperties": False,
         },
     },

@@ -52,13 +52,29 @@ easy_rev/
 1. 若提供 `capture_path` → offline 图/pack（`status=offline`）
 2. 否则 → `status=degraded` + `install_hints`，不崩溃
 
-## Doctor
+## Doctor / Preflight / Auto-fix
 
-`easy-rev doctor` / `ai call doctor` 额外输出：
+统一依赖目录：`easy_rev.core.deps`（检测 + 安装配方 + readiness 分数）。
 
-- `missing` — 缺失可选依赖名
-- `install_hints` — 可复制安装命令
-- `status_legend` — 状态字段说明
+```bash
+easy-rev doctor                      # 全端检查 + score/missing/fixable
+easy-rev doctor -p web --path browser
+easy-rev preflight -p android --path dynamic
+easy-rev doctor --fix --dry-run     # 预览 pip 安装命令
+easy-rev doctor --fix               # 自动补齐 fixable（pip / camoufox fetch）
+easy-rev doctor --fix --only frida,camoufox
+easy-rev ai call doctor.fix -i '{"ids":["frida"],"dry_run":true}'
+easy-rev ai call doctor.catalog -i '{}'
+```
+
+输出字段：
+
+- `platforms.*.score` / `ready` / `checks[]` / `capabilities`
+- `missing_required` / `missing_recommended` / `fixable`
+- `install_hints` / `next_steps` / `ai_hint`
+- `status_legend`
+
+Auto-fix 默认仅 pip extras + post_cmd（如 `camoufox fetch`）；`--allow-system` 才允许 brew。
 
 ## Frida live sessions
 

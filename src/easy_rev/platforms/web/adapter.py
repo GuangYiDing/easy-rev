@@ -15,11 +15,14 @@ class WebAdapter(PlatformAdapter):
     platforms = (Platform.WEB,)
 
     async def doctor(self) -> dict[str, Any]:
+        from easy_rev.core.deps import preflight
+
         out: dict[str, Any] = {
             "platform": "web",
             "camoufox_installed": False,
             "curl_cffi_installed": False,
             "playwright_available": False,
+            "httpx_available": False,
         }
         try:
             import camoufox  # noqa: F401
@@ -40,6 +43,24 @@ class WebAdapter(PlatformAdapter):
             out["playwright_available"] = True
         except Exception:  # noqa: BLE001
             pass
+        try:
+            import httpx  # noqa: F401
+
+            out["httpx_available"] = True
+        except Exception:  # noqa: BLE001
+            pass
+        pf = preflight("web")
+        web_pf = (pf.get("platforms") or {}).get("web") or {}
+        out["ready"] = web_pf.get("ready")
+        out["score"] = web_pf.get("score")
+        out["missing"] = web_pf.get("missing")
+        out["capabilities"] = {
+            "browser": bool(out["camoufox_installed"] or out["playwright_available"]),
+            "tls_fingerprint": bool(out["curl_cffi_installed"]),
+            "offline_protocol": bool(out["httpx_available"]),
+            "extension_bridge": True,  # pure Python
+        }
+        out["install_hints"] = pf.get("install_hints") or []
         return out
 
     async def explore(self, target: TargetSpec, **kwargs: Any) -> ProbeResult:

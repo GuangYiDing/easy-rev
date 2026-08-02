@@ -76,10 +76,62 @@ def main_callback(
 @app.command("doctor")
 def doctor_cmd(
     platform: str = typer.Option("all", "--platform", "-p"),
+    path: str | None = typer.Option(None, "--path", help="Capability filter: static|dynamic|browser|frida|..."),
+    fix: bool = typer.Option(False, "--fix", help="Auto-install fixable Python deps"),
+    only: str | None = typer.Option(None, "--only", help="Comma-separated dep ids for --fix"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="With --fix: print commands only"),
+    allow_system: bool = typer.Option(False, "--allow-system", help="Allow brew/system package installs"),
     as_json: bool = typer.Option(True, "--json/--pretty"),
 ) -> None:
-    """Check reverse-engineering toolchains for all platforms."""
-    result = _run(call_tool("doctor", {"platform": platform}))
+    """Check RE toolchains; optionally auto-fix missing Python deps."""
+    if fix:
+        ids = [x.strip() for x in only.split(",")] if only else None
+        result = _run(
+            call_tool(
+                "doctor.fix",
+                {
+                    "platform": platform,
+                    "ids": ids,
+                    "dry_run": dry_run,
+                    "allow_system": allow_system,
+                },
+            )
+        )
+        _print_result(result, as_json)
+        return
+    args: dict[str, Any] = {"platform": platform}
+    if path:
+        args["path"] = path
+    result = _run(call_tool("doctor", args))
+    if not as_json:
+        # pretty human summary (escape [] so rich won't treat pip extras as markup)
+        from rich.markup import escape
+
+        console.print(
+            f"[bold]easy-rev doctor[/bold] v{result.get('version')} ready={result.get('ready')}"
+        )
+        console.print(f"missing: {escape(str(result.get('missing')))}")
+        console.print(f"fixable: {escape(str(result.get('fixable')))}")
+        for h in result.get("install_hints") or []:
+            console.print(f"  • {escape(str(h))}")
+        for step in result.get("next_steps") or []:
+            console.print(f"[cyan]→[/cyan] {escape(str(step))}")
+        console.print_json(data=result)
+        return
+    _print_result(result, as_json)
+
+
+@app.command("preflight")
+def preflight_cmd(
+    platform: str = typer.Option("all", "--platform", "-p"),
+    path: str | None = typer.Option(None, "--path"),
+    as_json: bool = typer.Option(True, "--json/--pretty"),
+) -> None:
+    """RE preflight: readiness score and missing tools for a platform/path."""
+    args: dict[str, Any] = {"platform": platform}
+    if path:
+        args["path"] = path
+    result = _run(call_tool("doctor.preflight", args))
     _print_result(result, as_json)
 
 

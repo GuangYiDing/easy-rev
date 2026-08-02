@@ -49,7 +49,10 @@ pip install -e ".[tls]"
 # pip install -e ".[all]"
 
 cp .env.example .env 2>/dev/null || true
-easy-rev doctor   # 含 missing + install_hints
+easy-rev doctor                 # 各端工具/依赖 + score
+easy-rev doctor --fix --dry-run  # 预览可自动安装的命令
+easy-rev doctor --fix            # AI/CLI 自动补齐 pip 依赖（frida/camoufox/…）
+easy-rev preflight -p web --path browser
 ```
 
 ## 快速开始

@@ -24,6 +24,8 @@ def _run_version(cmd: list[str]) -> str | None:
 
 
 def probe_desktop_toolchain(platform: Platform) -> dict[str, Any]:
+    from easy_rev.core.deps import preflight
+
     info: dict[str, Any] = {
         "python": sys.version.split()[0],
         "host_os": sys.platform,
@@ -51,4 +53,19 @@ def probe_desktop_toolchain(platform: Platform) -> dict[str, Any]:
 
     if info["tools"].get("otool", {}).get("available"):
         info["tools"]["otool"]["version"] = _run_version(["otool", "--version"])
+
+    key = "macos" if platform is Platform.MACOS else "windows"
+    pf = preflight(key)
+    block = (pf.get("platforms") or {}).get(key) or {}
+    info["ready"] = block.get("ready")
+    info["score"] = block.get("score")
+    info["missing"] = block.get("missing")
+    info["install_hints"] = pf.get("install_hints") or []
+    info["capabilities"] = {
+        "static": True,  # pure Python PE/Mach-O always available
+        "dynamic": bool(info["frida"]),
+        "otool": bool(info["tools"].get("otool", {}).get("available")),
+        "codesign": bool(info["tools"].get("codesign", {}).get("available")),
+    }
+    info["next_steps"] = pf.get("next_steps") or []
     return info
