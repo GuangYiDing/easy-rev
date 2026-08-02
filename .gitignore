@@ -1,0 +1,23 @@
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.env
+*.egg-info/
+dist/
+build/
+output/
+.DS_Store
+*.log
+.coverage
+htmlcov/
+artifacts/
+*.har
+run-report.json
+run-dry-report.json
+.easy-rev/
+
+# temp/office lock files
+.!*

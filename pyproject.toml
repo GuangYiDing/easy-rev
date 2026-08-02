@@ -1,0 +1,112 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "easy-rev"
+version = "0.1.0"
+description = "商业级多端逆向框架：Web / Desktop (Windows·macOS) / Mobile (Android·iOS)"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "easy-rev contributors" }]
+keywords = [
+  "reverse-engineering",
+  "frida",
+  "web-re",
+  "android",
+  "ios",
+  "windows",
+  "macos",
+  "protocol",
+  "ai-agent",
+]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Topic :: Security",
+]
+dependencies = [
+  "pydantic>=2.6",
+  "pydantic-settings>=2.2",
+  "typer>=0.12",
+  "rich>=13.7",
+  "httpx[socks]>=0.27",
+  "socksio>=1.0",
+  "pyyaml>=6.0",
+  "jinja2>=3.1",
+  "aiosqlite>=0.20",
+  "python-dotenv>=1.0",
+  "platformdirs>=4.2",
+]
+
+[project.optional-dependencies]
+# Web RE (Camoufox anti-detect browser)
+web = [
+  "camoufox[geoip]>=0.4",
+]
+# TLS fingerprint for pure protocol replay
+tls = [
+  "curl_cffi>=0.6",
+]
+# Dynamic instrumentation (desktop + mobile)
+frida = [
+  "frida>=16.0",
+  "frida-tools>=12.0",
+]
+# Android static helpers
+android = [
+  "androguard>=4.0",
+]
+# MCP server for AI agents
+mcp = [
+  "mcp>=1.0",
+]
+dev = [
+  "pytest>=8.0",
+  "pytest-asyncio>=0.23",
+  "ruff>=0.4",
+]
+all = [
+  "easy-rev[web,tls,frida,android,mcp]",
+]
+
+[project.scripts]
+easy-rev = "easy_rev.cli.main:app"
+easy-rev-mcp = "easy_rev.mcp_server:main"
+
+[project.urls]
+Homepage = "https://github.com/easy-rev/easy-rev"
+Documentation = "https://github.com/easy-rev/easy-rev#readme"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/easy_rev"]
+
+[tool.hatch.build.targets.wheel.sources]
+"src/easy_rev" = "easy_rev"
+
+[tool.hatch.build.targets.wheel.force-include]
+"src/easy_rev/platforms/desktop/scripts" = "easy_rev/platforms/desktop/scripts"
+"src/easy_rev/platforms/mobile/scripts" = "easy_rev/platforms/mobile/scripts"
+
+[tool.hatch.build.targets.sdist]
+include = ["src/easy_rev", "packs", "docs", "extensions", "README.md", "tests"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+ignore = [
+  "UP042",  # str Enum fine for platform values
+  "B008",   # typer Option() defaults
+]

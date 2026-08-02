@@ -1,0 +1,39 @@
+{
+  "manifest_version": 3,
+  "name": "Easy-Rev Reverse",
+  "version": "0.3.0",
+  "description": "一键录制当前页网络/签名流量，空闲自动上传到本机 Easy-Rev bridge。",
+  "permissions": [
+    "activeTab",
+    "alarms",
+    "debugger",
+    "cookies",
+    "notifications",
+    "scripting",
+    "storage",
+    "tabs"
+  ],
+  "host_permissions": [
+    "http://127.0.0.1/*",
+    "http://localhost/*",
+    "<all_urls>"
+  ],
+  "action": {
+    "default_title": "Easy-Rev：点此录制 / 查看状态",
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}

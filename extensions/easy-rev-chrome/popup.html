@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Easy-Rev</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #0f1419;
+        --card: #1a2332;
+        --fg: #e7ecf3;
+        --muted: #8b9bb4;
+        --line: #2a3548;
+        --accent: #4285f4;
+        --ok: #34a853;
+        --err: #ea4335;
+        --warn: #f9ab00;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font: 13px/1.45 system-ui, -apple-system, sans-serif;
+        background: var(--bg);
+        color: var(--fg);
+        width: 340px;
+      }
+      .wrap { padding: 14px; }
+      .top {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 8px;
+        margin-bottom: 10px;
+      }
+      h1 {
+        font-size: 15px;
+        margin: 0;
+        font-weight: 700;
+      }
+      .sub {
+        color: var(--muted);
+        font-size: 11px;
+        margin-top: 2px;
+      }
+      .chip {
+        flex: none;
+        font-size: 10px;
+        font-weight: 700;
+        padding: 4px 8px;
+        border-radius: 999px;
+        background: var(--card);
+        color: var(--muted);
+        border: 1px solid var(--line);
+      }
+      .chip.ok { color: var(--ok); border-color: rgba(52,168,83,.4); }
+      .chip.err { color: var(--err); border-color: rgba(234,67,53,.4); }
+      .chip.rec { color: #f28b82; border-color: rgba(234,67,53,.45); background: #2a1515; }
+      .chip.wait { color: var(--warn); }
+
+      .hero {
+        background: linear-gradient(180deg, #182233 0%, #141c28 100%);
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        padding: 12px;
+        margin-bottom: 10px;
+      }
+      .hero .title { font-weight: 700; font-size: 13px; margin-bottom: 4px; }
+      .hero .desc { color: var(--muted); font-size: 11px; }
+      .metrics {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 6px;
+        margin-top: 10px;
+      }
+      .metric {
+        background: rgba(15,20,25,.55);
+        border-radius: 8px;
+        padding: 7px 8px;
+      }
+      .metric b { display: block; font-size: 15px; }
+      .metric span { font-size: 10px; color: var(--muted); }
+
+      button {
+        width: 100%;
+        margin-top: 8px;
+        padding: 11px 12px;
+        border: 0;
+        border-radius: 10px;
+        background: var(--accent);
+        color: #fff;
+        font-weight: 700;
+        cursor: pointer;
+        font-size: 13px;
+      }
+      button:disabled { opacity: .55; cursor: wait; }
+      button.secondary {
+        background: var(--card);
+        border: 1px solid var(--line);
+        color: var(--fg);
+        font-weight: 600;
+      }
+      button.stop { background: #c5221f; }
+      button.ghost {
+        background: transparent;
+        border: 1px dashed var(--line);
+        color: var(--muted);
+        font-weight: 600;
+        padding: 8px;
+        font-size: 12px;
+      }
+      .btn-row { display: flex; gap: 8px; }
+      .btn-row button { flex: 1; }
+
+      #status {
+        margin-top: 10px;
+        padding: 9px 10px;
+        border-radius: 10px;
+        background: var(--card);
+        border: 1px solid var(--line);
+        font-size: 11px;
+        white-space: pre-wrap;
+        word-break: break-word;
+        max-height: 170px;
+        overflow: auto;
+        color: var(--muted);
+      }
+      #status.ok { color: var(--ok); border-color: rgba(52,168,83,.35); }
+      #status.err { color: #f28b82; border-color: rgba(234,67,53,.35); }
+      #status.rec { color: #f28b82; border-color: rgba(234,67,53,.35); }
+
+      details {
+        margin-top: 10px;
+        border-top: 1px solid var(--line);
+        padding-top: 8px;
+      }
+      summary {
+        cursor: pointer;
+        font-size: 12px;
+        color: var(--muted);
+        user-select: none;
+      }
+      label {
+        display: block;
+        font-size: 11px;
+        color: var(--muted);
+        margin: 8px 0 4px;
+      }
+      input[type="text"],
+      input[type="number"] {
+        width: 100%;
+        padding: 7px 9px;
+        border-radius: 8px;
+        border: 1px solid var(--line);
+        background: var(--card);
+        color: var(--fg);
+      }
+      .row { display: flex; gap: 8px; }
+      .row > * { flex: 1; }
+      .check {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        margin-top: 8px;
+        font-size: 12px;
+        color: var(--fg);
+      }
+      .tip {
+        margin-top: 8px;
+        font-size: 10px;
+        color: var(--muted);
+        line-height: 1.4;
+      }
+      .steps {
+        margin: 0;
+        padding-left: 16px;
+        color: var(--muted);
+        font-size: 11px;
+      }
+      .steps li { margin: 2px 0; }
+      code {
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 10px;
+        background: #0c1016;
+        padding: 1px 4px;
+        border-radius: 4px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <div class="top">
+        <div>
+          <h1>Easy-Rev Reverse</h1>
+          <div class="sub">录制当前页 → 自动上传 Bridge</div>
+        </div>
+        <div id="bridgeChip" class="chip wait">Bridge…</div>
+      </div>
+
+      <div class="hero" id="hero">
+        <div class="title" id="heroTitle">准备就绪</div>
+        <div class="desc" id="heroDesc">先确保本机 Bridge 在跑，再点「开始录制」。</div>
+        <div class="metrics" id="metrics" hidden>
+          <div class="metric"><b id="mInteresting">0</b><span>业务请求</span></div>
+          <div class="metric"><b id="mEvents">0</b><span>总事件</span></div>
+          <div class="metric"><b id="mIdle">–</b><span>空闲/剩余</span></div>
+        </div>
+      </div>
+
+      <button id="recStart">开始录制</button>
+      <div class="btn-row">
+        <button id="recStop" class="stop" disabled>结束并上传</button>
+        <button id="recCancel" class="secondary" disabled>取消</button>
+      </div>
+      <button id="health" class="ghost">重新检查 Bridge</button>
+
+      <div id="status">打开弹窗时会自动检测 Bridge…</div>
+
+      <details id="settings">
+        <summary>设置与高级</summary>
+
+        <label>Bridge URL</label>
+        <input id="bridge" type="text" value="http://127.0.0.1:18766" />
+
+        <label>Token（可选）</label>
+        <input id="token" type="text" placeholder="与 bridge 一致时可填" />
+
+        <div class="row">
+          <div>
+            <label>空闲自动结束（秒）</label>
+            <input id="idle_s" type="number" min="3" max="120" value="12" />
+          </div>
+          <div>
+            <label>最长录制（秒）</label>
+            <input id="max_s" type="number" min="15" max="900" value="180" />
+          </div>
+        </div>
+
+        <label>最少业务请求数（达后再启用空闲结束）</label>
+        <input id="min_interesting" type="number" min="0" max="50" value="2" />
+
+        <label class="check">
+          <input id="autoIdle" type="checkbox" checked />
+          空闲自动上传
+        </label>
+        <label class="check">
+          <input id="fullRe" type="checkbox" checked />
+          完整逆向（hooks + crypto + auto_sign）
+        </label>
+        <label class="check">
+          <input id="writePack" type="checkbox" />
+          同时生成 Site Pack 草稿
+        </label>
+        <label>pack_id（可选）</label>
+        <input id="packId" type="text" placeholder="from-extension" />
+
+        <div class="row" style="margin-top: 8px">
+          <div>
+            <label>定时监听秒数</label>
+            <input id="seconds" type="number" min="3" max="300" value="30" />
+          </div>
+        </div>
+        <button id="go" class="secondary">定时分析当前页</button>
+        <button id="live" class="secondary">保持附着（预言机会话）</button>
+        <button id="sign" class="secondary">试签当前页 sign()</button>
+      </details>
+
+      <div class="tip">
+        <ol class="steps">
+          <li>终端：<code>easy-rev re bridge</code></li>
+          <li>打开目标站已登录页 → 点「开始录制」</li>
+          <li>可关弹窗；页内 HUD / 角标会显示进度</li>
+          <li>勿在同一 tab 开 DevTools</li>
+        </ol>
+      </div>
+    </div>
+    <script src="popup.js"></script>
+  </body>
+</html>

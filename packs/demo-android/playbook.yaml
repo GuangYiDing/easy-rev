@@ -1,0 +1,24 @@
+schema: easy-rev.playbook/v1
+platform: mobile
+vars:
+  package: ""
+  device: ""
+steps:
+  - id: static
+    action: mobile.static
+    package: "{{{{ vars.package }}}}"
+    # binary may be APK/IPA path
+    binary: "{{{{ vars.binary | default('') }}}}"
+
+  - id: spawn
+    action: mobile.spawn
+    package: "{{{{ vars.package }}}}"
+    device: "{{{{ vars.device }}}}"
+    scripts:
+      - hooks/ssl_pinning.js
+      - hooks/crypto.js
+      - hooks/network.js
+
+  - id: dump
+    action: mobile.dump
+    include: [classes, methods, keystore]

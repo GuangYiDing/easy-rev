@@ -1,0 +1,21 @@
+schema: easy-rev.pack/v1
+id: demo-web
+name: demo-web
+version: 0.1.0
+description: "demo-web"
+platform: web
+os: null
+author: ""
+license: MIT
+tags: []
+min_easy_rev: ">=0.1.0"
+target:
+  url: "https://example.com"
+  notes: "authorized target only"
+entry:
+  kind: declarative
+  playbook: playbook.yaml
+  hooks: hooks.py
+defaults: {}
+warnings:
+  - "仅用于授权测试 / 自有业务场景；禁止未授权逆向"
