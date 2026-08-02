@@ -79,8 +79,10 @@ easy-rev = "easy_rev.cli.main:app"
 easy-rev-mcp = "easy_rev.mcp_server:main"
 
 [project.urls]
-Homepage = "https://github.com/easy-rev/easy-rev"
-Documentation = "https://github.com/easy-rev/easy-rev#readme"
+Homepage = "https://github.com/GuangYiDing/easy-rev"
+Documentation = "https://github.com/GuangYiDing/easy-rev#readme"
+Repository = "https://github.com/GuangYiDing/easy-rev"
+Issues = "https://github.com/GuangYiDing/easy-rev/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/easy_rev"]
