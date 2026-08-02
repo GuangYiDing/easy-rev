@@ -64,10 +64,14 @@ async def run_re_explore(args: dict[str, Any]) -> dict[str, Any]:
                 "graph": graph if isinstance(graph, dict) else {"steps": graph},
                 "status": "offline",
                 "degraded": True,
+                "attached": False,
+                "dry_run": False,
+                "confidence": "medium" if apis else "low",
                 "recommendation": "offline_protocol",
                 "hint": "; ".join(install_hints(missing)) if missing else None,
                 "missing_deps": missing,
             }
+            offline["next_steps"] = _next_steps(offline)
             if args.get("write_pack") or args.get("pack_id"):
                 pack_id = args.get("pack_id") or "offline-explore"
                 dest = Path(args.get("pack_dest") or args.get("dest") or f"./packs/{pack_id}")
@@ -82,11 +86,13 @@ async def run_re_explore(args: dict[str, Any]) -> dict[str, Any]:
             return offline
 
         host = urlparse(url).netloc or url
-        return {
+        degraded_out = {
             "ok": True,
             "status": "degraded",
             "degraded": True,
             "dry_run": True,
+            "attached": False,
+            "confidence": "low",
             "url": url,
             "recommendation": "install_browser_or_pass_capture",
             "risk": "unknown",
@@ -104,6 +110,8 @@ async def run_re_explore(args: dict[str, Any]) -> dict[str, Any]:
                 "Use pack.from_capture / web.offline_chain when you already have capture JSON.",
             ],
         }
+        degraded_out["next_steps"] = _next_steps(degraded_out)
+        return degraded_out
 
     capture_args = {
         "url": url,
@@ -136,10 +144,13 @@ async def run_re_explore(args: dict[str, Any]) -> dict[str, Any]:
     try:
         capture = await run_site_capture(capture_args)
     except Exception as e:  # noqa: BLE001
-        return {
+        fail_out = {
             "ok": True,
             "status": "degraded",
             "degraded": True,
+            "attached": False,
+            "dry_run": False,
+            "confidence": "low",
             "url": url,
             "error": str(e),
             "recommendation": "browser_flow_or_extension",
@@ -150,6 +161,8 @@ async def run_re_explore(args: dict[str, Any]) -> dict[str, Any]:
             "hint": "; ".join(install_hints(missing)) if missing else "check browser engine / CDP",
             "notes": ["site.capture failed; try re bridge or offline capture_path"],
         }
+        fail_out["next_steps"] = _next_steps(fail_out)
+        return fail_out
 
     # Compact view for AI context
     apis = capture.get("apis") or []
@@ -302,6 +315,24 @@ async def run_re_explore(args: dict[str, Any]) -> dict[str, Any]:
             out["hooks_error"] = str(e)
 
     out["next_steps"] = _next_steps(out)
+    # Agent-facing confidence (adapter also derives; keep for direct callers)
+    if "confidence" not in out:
+        st = out.get("status")
+        if st == "attached" and (out.get("api_count") or 0) > 0:
+            out["confidence"] = "high"
+        elif st == "attached":
+            out["confidence"] = "medium"
+        elif st in {"offline", "degraded", "dry_run"}:
+            out["confidence"] = "low"
+        elif st == "error":
+            out["confidence"] = "none"
+        else:
+            out["confidence"] = "medium"
+    if "attached" not in out:
+        out["attached"] = out.get("status") == "attached"
+    if "dry_run" not in out:
+        out["dry_run"] = out.get("status") == "dry_run" or bool(out.get("dry_run"))
+
     out["commercial"] = {
         "har_path": capture.get("har_path"),
         "probe_hint": "re.probe_fields with capture_path to minimize JSON body",
@@ -312,23 +343,38 @@ async def run_re_explore(args: dict[str, Any]) -> dict[str, Any]:
 
 
 def _next_steps(out: dict[str, Any]) -> list[str]:
-    tips = []
+    """Suggest agent follow-ups from explore outcome."""
+    tips: list[str] = []
     rec = out.get("recommendation")
-    if rec == "protocol":
-        tips.append("Use pack.from_capture or re.explore write_pack=true → run with engine=http")
-        tips.append("pip install curl_cffi for TLS impersonate=chrome120 if blocked")
-        tips.append("re.probe_fields {capture_path} → shrink json to required keys")
-    elif rec == "hybrid":
-        tips.append("Signing risk detected — hybrid pack + http.from_browser")
-        tips.append("re.scaffold_hooks {pack_path, capture_path} then implement sign_request")
-    else:
-        tips.append("Few APIs found — fall back to site.inspect + declarative browser flow")
-    if out.get("pack"):
+    status = out.get("status")
+    if status in {"degraded", "dry_run"}:
+        for dep in out.get("missing_deps") or []:
+            tips.append(f"Install missing dependency: {dep}")
         tips.append(
-            f"Validate: easy-rev pack validate {out['pack'].get('pack_path')} && "
-            f"easy-rev pack install {out['pack'].get('pack_path')} --trust"
+            "Pass cdp_url= for Chrome attach, or capture_path= for offline protocol chain"
         )
-    else:
+        tips.append("Or: easy-rev re bridge + Chrome extension for logged-in RE")
+    if status == "offline":
+        tips.append("Review graph/steps then pack.from_capture or write_pack for protocol pack")
+        tips.append("Validate with pack.validate + pack.run --dry-run")
+    if out.get("capture_path"):
+        tips.append("re.probe_fields {capture_path} → shrink json to required keys")
+    auto_sign = out.get("auto_sign") or {}
+    if rec == "hybrid" or auto_sign.get("mode") in {
+        "browser_oracle",
+        "pure_python_with_oracle_fallback",
+    }:
+        tips.append("re.scaffold_hooks {pack_path, capture_path} then implement sign_request")
+    if rec == "protocol" and out.get("capture_path"):
+        tips.append("Try pure protocol replay via pack flow / http client with captured APIs")
+    if rec == "browser_flow":
+        tips.append("Few APIs found — use multi_step actions / CDP on logged-in tab")
+    if not out.get("pack") and not out.get("pack_path") and out.get("capture_path"):
         tips.append("Call re.explore with write_pack=true or pack.from_capture on capture_path")
-    tips.append("Ops: re.session.gc periodically; sessions auto-idle stop")
-    return tips
+    seen: set[str] = set()
+    uniq: list[str] = []
+    for tip in tips:
+        if tip not in seen:
+            seen.add(tip)
+            uniq.append(tip)
+    return uniq

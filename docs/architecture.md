@@ -11,10 +11,13 @@ easy_rev/
     web/                # 浏览器引擎 + re/* 全套 Web 逆向
     desktop/            # Windows / macOS + Frida + 静态 PE/Mach-O/ELF
     mobile/             # Android / iOS + Frida + APK/IPA 静态
-  pack/                 # Target Pack 模板
+  pack/                 # Target Pack 模板 + run/validate
+  skill/                # Router + scope gate + evidence + field-journal
   ai/                   # Agent 工具面（JSON in/out）
   cli/                  # easy-rev 命令行
   storage/              # 可选 SQLite 产物索引
+
+skills/                 # 方法论 SKILL.md（Agent 可读，非内核）
 ```
 
 统一入口：`PlatformAdapter.explore / capture / analyze / doctor`。
@@ -84,6 +87,19 @@ In-process sessions (`easy_rev.platforms.common.frida_live`):
 - Messages: `schema=easy-rev.frida.message/v1` (`type`, `event`, `payload`, optional `error`)
 - Missing frida → `status=dry_run` stub still drains schema messages
 
+## Skill Router + Ops
+
+吸收 reverse-skill 作战契约，落地为可执行工具：
+
+| tool | 作用 |
+|------|------|
+| `route` | PRIMARY 路由 |
+| `case.init` / `case.guard` | scope 门禁 |
+| `evidence.append` / `finding.append` / `path.append` | 证据链 |
+| `journal.write` / `journal.search` | 脱敏经验库 |
+
+`pack.run --execute` 前会跑 scope gate；dry-run 始终允许规划。
+
 ## Pack run
 
 `pack.run` / `easy-rev pack run PATH`:
@@ -106,3 +122,22 @@ Exposes all `TOOL_SPECS` over stdio MCP.
 ## 合规
 
 仅授权目标。产物可能含 token/PII：勿提交 `artifacts/`。
+
+
+## Result envelope (explore / dynamic)
+
+Agent-facing explore results always include:
+
+| field | meaning |
+|-------|---------|
+| `ok` | contract completed (true for dry_run/offline/degraded) |
+| `status` | `attached` \| `dry_run` \| `error` \| `static` \| `offline` \| `degraded` |
+| `attached` | truly instrumented / browser live |
+| `dry_run` | optional dep missing; not attached |
+| `degraded` | fallback path |
+| `confidence` | `high` \| `medium` \| `low` \| `none` |
+| `hint` / `next_steps` / `blocking_issues` | guidance |
+| `artifacts` / `findings` | paths + structured detail |
+
+`ProbeResult.to_envelope()` is the single serialization path used by `ai call explore`.
+Pass `redact: true` to strip tokens/cookies before sharing.

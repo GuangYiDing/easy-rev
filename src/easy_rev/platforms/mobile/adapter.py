@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from easy_rev.core.platform import Platform, PlatformFamily, TargetSpec
+from easy_rev.core.result import derive_status
 from easy_rev.core.types import ArtifactKind, CaptureArtifact, ProbeResult
 from easy_rev.platforms.base import PlatformAdapter
 
@@ -28,6 +29,8 @@ class MobileAdapter(PlatformAdapter):
         started = datetime.now(UTC)
         findings: dict[str, Any] = {}
         arts: list[CaptureArtifact] = []
+        next_steps: list[str] = []
+        blocking: list[str] = []
 
         binary = target.binary or kwargs.get("binary")
         package = target.package or kwargs.get("package")
@@ -42,6 +45,8 @@ class MobileAdapter(PlatformAdapter):
                 arts.append(CaptureArtifact(kind=ArtifactKind.BINARY, path=p))
             if not package and static.get("package"):
                 package = static["package"]
+            if static.get("error"):
+                blocking.append(f"static:{static.get('error')}")
 
         if package and kwargs.get("attach", True):
             from easy_rev.platforms.mobile.common.frida_session import explore_app
@@ -59,16 +64,30 @@ class MobileAdapter(PlatformAdapter):
                 arts.append(
                     CaptureArtifact(kind=ArtifactKind.FRIDA_LOG, path=dyn["log_path"])
                 )
+            if dyn.get("dry_run") or dyn.get("status") == "dry_run":
+                blocking.append("missing:frida")
+                next_steps.append("pip install 'easy-rev[frida]' and ensure frida-server on device")
+            elif dyn.get("error") or dyn.get("status") == "error":
+                blocking.append(f"dynamic:{dyn.get('error') or 'attach_failed'}")
+                if dyn.get("hint"):
+                    next_steps.append(str(dyn["hint"]))
 
         if not binary and not package:
             return ProbeResult(
                 ok=False,
                 platform=self.platform.value,
                 target=target.label(),
+                status="error",
+                confidence="none",
                 error="mobile explore requires binary= (apk/ipa) and/or package=",
+                blocking_issues=["missing:binary_or_package"],
+                next_steps=[
+                    "Pass binary=./app.apk for static analysis",
+                    "Pass package=com.example for Frida spawn/attach",
+                ],
                 started_at=started,
                 finished_at=datetime.now(UTC),
-            )
+            ).ensure_status_fields()
 
         recommendation = "static"
         risk = "low"
@@ -77,21 +96,39 @@ class MobileAdapter(PlatformAdapter):
         if dyn.get("attached"):
             recommendation = "frida"
             risk = "medium"
+            next_steps.append("Load mobile scripts (ssl_pinning/crypto/network) via pack hooks or frida.session")
         if static.get("obfuscated") or static.get("ssl_pinning_hints"):
             risk = "high"
             recommendation = "frida+unpin"
+            next_steps.append("Pinning/obfuscation hints — customize ssl_pinning.js for the target stack")
+        if binary and not package:
+            next_steps.append("Use package from static report (or mobile.apps) then re-run with attach")
+        if package and not binary:
+            next_steps.append("Optional: pass binary=apk/ipa for static context")
+
+        status = derive_status(has_static=bool(binary and findings.get("static")), dyn=dyn)
+        hint = dyn.get("hint") if isinstance(dyn, dict) else None
+        if status == "static" and not hint:
+            hint = "static-only path; dynamic not attached"
+        if status == "dry_run" and not hint:
+            hint = "Frida missing or dry-run — not attached"
 
         return ProbeResult(
-            ok=True,
+            ok=status != "error",
             platform=self.platform.value,
             target=package or target.label(),
+            status=status,
+            hint=hint,
+            next_steps=next_steps,
+            blocking_issues=blocking,
             recommendation=recommendation,
             risk=risk,
             artifacts=arts,
             findings=findings,
+            error=dyn.get("error") if status == "error" else None,
             started_at=started,
             finished_at=datetime.now(UTC),
-        )
+        ).ensure_status_fields()
 
     async def capture(self, target: TargetSpec, **kwargs: Any) -> dict[str, Any]:
         package = target.package or kwargs.get("package")

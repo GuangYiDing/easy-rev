@@ -1,0 +1,28 @@
+schema: easy-rev.pack/v1
+id: simplysign-desktop
+name: simplysign-desktop
+version: 0.1.0
+description: "Certum SimplySign Desktop (macOS) — OAuth2 云会话 + PKCS#11 本机签名链路"
+platform: desktop
+os: macos
+author: ""
+license: MIT
+tags: [certum, simplysign, pkcs11, codesign, oauth2]
+min_easy_rev: ">=0.1.0"
+target:
+  os: macos
+  process: "SimplySign Desktop"
+  binary: "/Applications/SimplySign Desktop.app/Contents/MacOS/SimplySign Desktop"
+  notes: |
+    菜单栏应用 + LaunchAgent 自启。PKCS#11: /usr/local/lib/libSimplySignPKCS.dylib
+    配置: ~/SimplySignDesktop.xml  偏好: pl.ads.SimplySign-Desktop
+    云端: cloudsign.webnotarius.pl (OAuth2 IDP + SCS card API)
+entry:
+  kind: declarative
+  playbook: playbook.yaml
+  hooks: hooks/
+defaults: {}
+warnings:
+  - "仅用于授权测试 / 自有业务场景；禁止未授权逆向"
+  - "私钥在 Certum 云端，无法导出；本 pack 目标是会话/OTP 体验，不是提取私钥"
+  - "产物日志可能含账号邮箱；勿提交公共仓库"

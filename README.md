@@ -44,6 +44,33 @@
 | Agent 无法稳定驱动逆向 | **JSON in / JSON out** 工具面 + **MCP stdio** 服务 |
 | Web 已登录场景难抓 | Chrome 扩展 Bridge + CDP 附着 |
 | 动态路径误判成功 | 统一 `status`：`attached` / `dry_run` / `degraded` / … |
+| Agent 乱试工具、经验不沉淀 | **Skill Router** + Scope 门禁 + Evidence 链 + Field Journal |
+
+---
+
+
+## Skill Router + Ops（Agent 作战层）
+
+将 reverse-skill 风格的**路由 / 授权门禁 / 证据链 / 经验库**吸收为 Easy-Rev 一等能力，并与 Target Pack 合流：
+
+```bash
+# 1) 任务路由
+easy-rev route "逆向这个 APK 的 SSL pinning"
+
+# 2) 建 case（scope + evidence 脚手架 + pack）
+easy-rev case init --hint "授权 APK 分析" --name demo-apk \
+  --platform android --auth-granted --auth-basis own_system \
+  --target com.example.app --network-profile authorized_target_only --with-hooks
+
+# 3) ACT 前门禁
+easy-rev case guard packs/demo-apk
+
+# 4) 证据链 / 经验回写（AI tools）
+easy-rev ai call evidence.append -i '{"path":"packs/demo-apk","title":"...","repro_command":"..."}'
+easy-rev ai call journal.search -i '{"query":"okhttp pinning"}'
+```
+
+方法论文档：[`skills/`](skills/) · 归属说明：[`skills/ATTRIBUTION.md`](skills/ATTRIBUTION.md)
 
 ---
 

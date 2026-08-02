@@ -31,91 +31,109 @@ async def call_tool(name: str, args: dict[str, Any] | None = None) -> dict[str, 
         return _err(str(e), tool=name)
 
 
+async def _web_explore(args: dict[str, Any]) -> dict[str, Any]:
+    return await _explore({**args, "platform": "web"})
+
+
+async def _web_capture(args: dict[str, Any]) -> dict[str, Any]:
+    return await _capture({**args, "platform": "web"})
+
+
+async def _desktop_explore(args: dict[str, Any]) -> dict[str, Any]:
+    plat = args.get("platform") or (
+        "macos" if py_platform.system() == "Darwin" else "windows"
+    )
+    return await _explore({**args, "platform": plat})
+
+
+async def _mobile_explore(args: dict[str, Any]) -> dict[str, Any]:
+    return await _explore({**args, "platform": args.get("platform") or "android"})
+
+
+async def _desktop_scripts(args: dict[str, Any]) -> dict[str, Any]:
+    return _scripts("desktop", args)
+
+
+async def _mobile_scripts(args: dict[str, Any]) -> dict[str, Any]:
+    return _scripts("mobile", args)
+
+
+# Registry of tool handlers. Values may be sync or async callables.
+TOOL_HANDLERS: dict[str, Any] = {}
+
+
+def _register_handlers() -> None:
+    """Populate TOOL_HANDLERS once function defs exist (called at import end)."""
+    TOOL_HANDLERS.update(
+        {
+            "doctor": _doctor,
+            "doctor.preflight": _doctor_preflight,
+            "doctor.fix": _doctor_fix,
+            "doctor.catalog": _doctor_catalog,
+            "explore": _explore,
+            "capture": _capture,
+            "analyze": _analyze,
+            "web.explore": _web_explore,
+            "web.capture": _web_capture,
+            "web.bridge.start": _bridge_start,
+            "web.bridge.status": _bridge_status,
+            "web.analyze_js": _analyze_js,
+            "desktop.ps": _desktop_ps,
+            "desktop.explore": _desktop_explore,
+            "mobile.devices": _mobile_devices,
+            "mobile.apps": _mobile_apps,
+            "mobile.explore": _mobile_explore,
+            "pack.init": _pack_init,
+            "pack.list": lambda args: _pack_list(),
+            "pack.from_capture": _pack_from_capture,
+            "web.dependency_graph": _web_dependency_graph,
+            "desktop.scripts": _desktop_scripts,
+            "mobile.scripts": _mobile_scripts,
+            "web.sign_synth": _web_sign_synth,
+            "web.diff_capture": _web_diff_capture,
+            "web.offline_chain": _web_offline_chain,
+            "web.diagnose": _web_diagnose,
+            "web.har_export": _web_har_export,
+            "web.session.start": _web_session_start,
+            "web.session.stop": _web_session_stop,
+            "web.session.list": _web_session_list,
+            "pack.validate": _pack_validate,
+            "pack.run": _pack_run,
+            "route": _route,
+            "route.table": lambda args: _route_table(),
+            "case.init": _case_init,
+            "case.guard": _case_guard,
+            "evidence.append": _evidence_append,
+            "finding.append": _finding_append,
+            "path.append": _path_append,
+            "journal.write": _journal_write,
+            "journal.search": _journal_search,
+            "skill.list": lambda args: _skill_list(),
+            "frida.session.start": _frida_session_start,
+            "frida.session.stop": _frida_session_stop,
+            "frida.session.list": _frida_session_list,
+            "frida.session.drain": _frida_session_drain,
+            "frida.session.eval": _frida_session_eval,
+        }
+    )
+
+
 async def _dispatch(name: str, args: dict[str, Any]) -> dict[str, Any]:
-    if name == "doctor":
-        return await _doctor(args)
-    if name == "doctor.preflight":
-        return _doctor_preflight(args)
-    if name == "doctor.fix":
-        return _doctor_fix(args)
-    if name == "doctor.catalog":
-        return _doctor_catalog(args)
-    if name == "explore":
-        return await _explore(args)
-    if name == "capture":
-        return await _capture(args)
-    if name == "analyze":
-        return await _analyze(args)
-    if name == "web.explore":
-        args = {**args, "platform": "web"}
-        return await _explore(args)
-    if name == "web.capture":
-        args = {**args, "platform": "web"}
-        return await _capture(args)
-    if name == "web.bridge.start":
-        return await _bridge_start(args)
-    if name == "web.bridge.status":
-        return await _bridge_status(args)
-    if name == "web.analyze_js":
-        return await _analyze_js(args)
-    if name == "desktop.ps":
-        return _desktop_ps(args)
-    if name == "desktop.explore":
-        plat = args.get("platform") or (
-            "macos" if py_platform.system() == "Darwin" else "windows"
-        )
-        args = {**args, "platform": plat}
-        return await _explore(args)
-    if name == "mobile.devices":
-        return await _mobile_devices(args)
-    if name == "mobile.apps":
-        return _mobile_apps(args)
-    if name == "mobile.explore":
-        args = {**args, "platform": args.get("platform") or "android"}
-        return await _explore(args)
-    if name == "pack.init":
-        return _pack_init(args)
-    if name == "pack.list":
-        return _pack_list()
-    if name == "pack.from_capture":
-        return _pack_from_capture(args)
-    if name == "web.dependency_graph":
-        return _web_dependency_graph(args)
-    if name == "desktop.scripts":
-        return _scripts("desktop", args)
-    if name == "mobile.scripts":
-        return _scripts("mobile", args)
-    if name == "web.sign_synth":
-        return _web_sign_synth(args)
-    if name == "web.diff_capture":
-        return _web_diff_capture(args)
-    if name == "web.offline_chain":
-        return _web_offline_chain(args)
-    if name == "web.diagnose":
-        return await _web_diagnose(args)
-    if name == "web.har_export":
-        return _web_har_export(args)
-    if name == "web.session.start":
-        return await _web_session_start(args)
-    if name == "web.session.stop":
-        return await _web_session_stop(args)
-    if name == "web.session.list":
-        return await _web_session_list(args)
-    if name == "pack.validate":
-        return _pack_validate(args)
-    if name == "pack.run":
-        return await _pack_run(args)
-    if name == "frida.session.start":
-        return _frida_session_start(args)
-    if name == "frida.session.stop":
-        return _frida_session_stop(args)
-    if name == "frida.session.list":
-        return _frida_session_list(args)
-    if name == "frida.session.drain":
-        return _frida_session_drain(args)
-    if name == "frida.session.eval":
-        return _frida_session_eval(args)
-    return _err(f"unknown tool: {name}", available=[t["name"] for t in TOOL_SPECS])
+    if not TOOL_HANDLERS:
+        _register_handlers()
+    handler = TOOL_HANDLERS.get(name)
+    if handler is None:
+        return _err(f"unknown tool: {name}", available=[t["name"] for t in TOOL_SPECS])
+    import inspect
+
+    # pack.list registered as zero-arg lambda
+    try:
+        result = handler(args)
+    except TypeError:
+        result = handler()
+    if inspect.isawaitable(result):
+        result = await result
+    return result
 
 
 def _doctor_preflight(args: dict[str, Any]) -> dict[str, Any]:
@@ -244,12 +262,12 @@ def _target_from_args(args: dict[str, Any]) -> TargetSpec:
 
 async def _explore(args: dict[str, Any]) -> dict[str, Any]:
     from easy_rev.core.deps import preflight
+    from easy_rev.util.redact import redact_obj
 
     target = _target_from_args(args)
     adapter = get_adapter(target.platform)
     # Preflight snapshot (non-blocking) so AI sees missing tools before/with explore
     plat = target.platform.value
-    path_hint = None
     if plat == "web":
         path_hint = "browser"
     elif plat in {"android", "ios"} and (args.get("package") or args.get("attach", True)):
@@ -263,28 +281,35 @@ async def _explore(args: dict[str, Any]) -> dict[str, Any]:
     # pass through remaining kwargs
     kwargs = {k: v for k, v in args.items() if k not in {"platform"}}
     result = await adapter.explore(target, **kwargs)
-    out = {
-        "ok": result.ok,
-        "platform": result.platform,
-        "target": result.target,
-        "recommendation": result.recommendation,
-        "risk": result.risk,
-        "artifacts": [a.model_dump() for a in result.artifacts],
-        "findings": result.findings or {},
-        "error": result.error,
-        "message": result.message,
-        "preflight": {
-            "path": path_hint,
-            "ready": pf.get("ready"),
-            "score": ((pf.get("platforms") or {}).get(plat) or {}).get("score"),
-            "missing": ((pf.get("platforms") or {}).get(plat) or {}).get("missing"),
-            "fixable": pf.get("fixable"),
-            "install_hints": pf.get("install_hints"),
-            "next_steps": pf.get("next_steps"),
-        },
+    out = result.to_envelope()
+    # Always keep artifacts/findings even if empty for contract stability
+    out["artifacts"] = [a.model_dump(mode="json") for a in result.artifacts]
+    out["findings"] = dict(result.findings or {})
+    out["next_steps"] = list(result.next_steps or [])
+    out["blocking_issues"] = list(result.blocking_issues or [])
+    preflight_block = {
+        "path": path_hint,
+        "ready": pf.get("ready"),
+        "score": ((pf.get("platforms") or {}).get(plat) or {}).get("score"),
+        "missing": ((pf.get("platforms") or {}).get(plat) or {}).get("missing"),
+        "fixable": pf.get("fixable"),
+        "install_hints": pf.get("install_hints"),
+        "next_steps": pf.get("next_steps"),
     }
-    if isinstance(out["findings"], dict):
-        out["findings"] = {**out["findings"], "preflight_ready": pf.get("ready")}
+    out["preflight"] = preflight_block
+    out["findings"] = {**out["findings"], "preflight_ready": pf.get("ready")}
+    # Surface preflight next steps when explore itself has few tips
+    if preflight_block.get("next_steps") and not out.get("next_steps"):
+        out["next_steps"] = list(preflight_block["next_steps"] or [])
+    # Optional redaction for agent-safe sharing
+    if args.get("redact") or args.get("redact_sensitive"):
+        out = redact_obj(out)
+    # Ensure status legend-friendly fields always present
+    out.setdefault("status", result.status or ("error" if not result.ok else "static"))
+    out.setdefault("attached", bool(result.attached))
+    out.setdefault("dry_run", bool(result.dry_run))
+    out.setdefault("degraded", bool(result.degraded))
+    out.setdefault("confidence", result.confidence or "low")
     return out
 
 
@@ -375,6 +400,7 @@ def _pack_init(args: dict[str, Any]) -> dict[str, Any]:
         description=args.get("description") or "",
         platform=args.get("platform") or "web",
         with_hooks=bool(args.get("with_hooks")),
+        with_ops=bool(args.get("with_ops", True)),
     )
     return _ok(path=str(path), pack_id=pack_id)
 
@@ -810,4 +836,176 @@ def _frida_session_eval(args: dict[str, Any]) -> dict[str, Any]:
     return eval_js(str(sid), str(source))
 
 
-__all__ = ["call_tool", "tools_catalog", "tool_schema"]
+
+
+def _route(args: dict[str, Any]) -> dict[str, Any]:
+    from easy_rev.skill.routing import master_route
+
+    hint = args.get("hint") or args.get("task") or ""
+    if not hint:
+        return _err("hint required")
+    return master_route(str(hint), platform=args.get("platform"))
+
+
+def _route_table() -> dict[str, Any]:
+    from easy_rev.skill.routing import route_table
+
+    rows = route_table()
+    return _ok(routes=rows, count=len(rows))
+
+
+def _case_init(args: dict[str, Any]) -> dict[str, Any]:
+    from easy_rev.skill.case import case_init
+
+    return case_init(
+        hint=str(args.get("hint") or ""),
+        case_name=args.get("case_name"),
+        dest=args.get("dest"),
+        platform=args.get("platform"),
+        auth_granted=bool(args.get("auth_granted")),
+        auth_basis=str(args.get("auth_basis") or "unknown"),
+        network_profile=str(args.get("network_profile") or "offline"),
+        target=args.get("target"),
+        assets=list(args.get("assets") or []) or None,
+        with_pack=bool(args.get("with_pack", True)),
+        with_hooks=bool(args.get("with_hooks")),
+        notes=str(args.get("notes") or ""),
+    )
+
+
+def _case_guard(args: dict[str, Any]) -> dict[str, Any]:
+    from easy_rev.skill.case import case_guard
+
+    path = args.get("path")
+    if not path:
+        return _err("path required")
+    return case_guard(path, force=bool(args.get("force")))
+
+
+def _evidence_append(args: dict[str, Any]) -> dict[str, Any]:
+    from easy_rev.skill.evidence import append_evidence
+
+    path = args.get("path")
+    title = args.get("title")
+    if not path or not title:
+        return _err("path and title required")
+    return append_evidence(
+        path,
+        title=str(title),
+        repro_command=str(args.get("repro_command") or ""),
+        source_type=str(args.get("source_type") or "command"),
+        source_ref=str(args.get("source_ref") or ""),
+        raw_excerpt=str(args.get("raw_excerpt") or ""),
+        content_hash=str(args.get("content_hash") or ""),
+        evidence_id=args.get("evidence_id"),
+    )
+
+
+def _finding_append(args: dict[str, Any]) -> dict[str, Any]:
+    from easy_rev.skill.evidence import append_finding
+
+    path = args.get("path")
+    title = args.get("title")
+    if not path or not title:
+        return _err("path and title required")
+    return append_finding(
+        path,
+        title=str(title),
+        severity=str(args.get("severity") or "info"),
+        category=str(args.get("category") or "reverse_algo"),
+        status=str(args.get("status") or "candidate"),
+        evidence_ids=list(args.get("evidence_ids") or []),
+        location=str(args.get("location") or ""),
+        impact=str(args.get("impact") or ""),
+        confidence=str(args.get("confidence") or "medium"),
+        repro_steps=list(args.get("repro_steps") or []),
+        remediation=str(args.get("remediation") or "n/a"),
+        finding_id=args.get("finding_id"),
+    )
+
+
+def _path_append(args: dict[str, Any]) -> dict[str, Any]:
+    from easy_rev.skill.evidence import append_path
+
+    path = args.get("path")
+    title = args.get("title")
+    if not path or not title:
+        return _err("path and title required")
+    steps = args.get("steps") or []
+    if not isinstance(steps, list):
+        steps = []
+    return append_path(
+        path,
+        title=str(title),
+        path_type=str(args.get("path_type") or "callflow"),
+        start=str(args.get("start") or ""),
+        goal=str(args.get("goal") or ""),
+        steps=[s if isinstance(s, dict) else {"action": str(s)} for s in steps],
+        residual_risks=str(args.get("residual_risks") or ""),
+        path_id=args.get("path_id"),
+    )
+
+
+def _journal_write(args: dict[str, Any]) -> dict[str, Any]:
+    from easy_rev.skill.journal import journal_write
+
+    title = args.get("title")
+    summary = args.get("summary")
+    if not title or not summary:
+        return _err("title and summary required")
+    return journal_write(
+        title=str(title),
+        summary=str(summary),
+        tags=list(args.get("tags") or []),
+        platform=args.get("platform"),
+        pattern=str(args.get("pattern") or ""),
+        commands=list(args.get("commands") or []),
+        pitfalls=list(args.get("pitfalls") or []),
+        root=args.get("root"),
+    )
+
+
+def _journal_search(args: dict[str, Any]) -> dict[str, Any]:
+    from easy_rev.skill.journal import journal_search
+
+    return journal_search(
+        str(args.get("query") or ""),
+        platform=args.get("platform"),
+        limit=int(args.get("limit") or 10),
+        root=args.get("root"),
+    )
+
+
+def _skill_list() -> dict[str, Any]:
+    roots = [Path("skills"), Path(__file__).resolve().parents[3] / "skills"]
+    found: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for base in roots:
+        if not base.is_dir():
+            continue
+        for p in sorted(base.rglob("SKILL.md")):
+            key = str(p.resolve())
+            if key in seen:
+                continue
+            seen.add(key)
+            name = p.parent.name
+            desc = ""
+            for line in p.read_text(encoding="utf-8", errors="ignore").splitlines()[:40]:
+                if line.startswith("description:"):
+                    desc = line.split(":", 1)[1].strip()
+                    break
+                if line.startswith("# "):
+                    desc = line[2:].strip()
+            found.append({"name": name, "path": str(p), "description": desc})
+        # also master routing
+        master = base / "MASTER-ROUTING.md"
+        if master.is_file():
+            key = str(master.resolve())
+            if key not in seen:
+                seen.add(key)
+                found.insert(0, {"name": "MASTER-ROUTING", "path": str(master), "description": "PRIMARY ladder"})
+    return _ok(skills=found, count=len(found))
+
+_register_handlers()
+
+__all__ = ["call_tool", "tools_catalog", "tool_schema", "TOOL_HANDLERS"]

@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from easy_rev.core.platform import Platform, PlatformFamily, TargetSpec
+from easy_rev.core.result import derive_status
 from easy_rev.core.types import ArtifactKind, CaptureArtifact, ProbeResult
 from easy_rev.platforms.base import PlatformAdapter
 
@@ -28,6 +29,8 @@ class DesktopAdapter(PlatformAdapter):
         started = datetime.now(UTC)
         findings: dict[str, Any] = {}
         arts: list[CaptureArtifact] = []
+        next_steps: list[str] = []
+        blocking: list[str] = []
 
         # 1) Static pass if binary present
         binary = target.binary or kwargs.get("binary")
@@ -38,6 +41,8 @@ class DesktopAdapter(PlatformAdapter):
             findings["static"] = static
             for p in static.get("artifact_paths") or []:
                 arts.append(CaptureArtifact(kind=ArtifactKind.BINARY, path=p))
+            if static.get("error"):
+                blocking.append(f"static:{static.get('error')}")
 
         # 2) Dynamic attach if process present
         process = target.process or kwargs.get("process")
@@ -55,16 +60,30 @@ class DesktopAdapter(PlatformAdapter):
                 arts.append(
                     CaptureArtifact(kind=ArtifactKind.FRIDA_LOG, path=dyn["log_path"])
                 )
+            if dyn.get("dry_run") or dyn.get("status") == "dry_run":
+                blocking.append("missing:frida")
+                next_steps.append("pip install 'easy-rev[frida]' then re-run with process=")
+            elif dyn.get("error") or dyn.get("status") == "error":
+                blocking.append(f"dynamic:{dyn.get('error') or 'attach_failed'}")
+                if dyn.get("hint"):
+                    next_steps.append(str(dyn["hint"]))
 
         if not binary and not process:
             return ProbeResult(
                 ok=False,
                 platform=self.platform.value,
                 target=target.label(),
+                status="error",
+                confidence="none",
                 error="desktop explore requires binary= and/or process=",
+                blocking_issues=["missing:binary_or_process"],
+                next_steps=[
+                    "Pass binary=/path/to/app for static analysis",
+                    "Pass process=NameOrPid for Frida attach",
+                ],
                 started_at=started,
                 finished_at=datetime.now(UTC),
-            )
+            ).ensure_status_fields()
 
         # Recommendation heuristic
         recommendation = "static"
@@ -74,21 +93,39 @@ class DesktopAdapter(PlatformAdapter):
         if dyn.get("attached"):
             recommendation = "frida"
             risk = "medium"
+            next_steps.append("Customize platforms/desktop/scripts or pack hooks for target crypto/SSL")
         if static.get("packing_suspected") or static.get("anti_debug"):
             risk = "high"
             recommendation = "frida+manual"
+            next_steps.append("Packing/anti-debug hints found — expect manual unpacking before clean hooks")
+        if binary and not process:
+            next_steps.append("Re-run with process= after launching the app to capture dynamic traffic")
+        if process and not binary:
+            next_steps.append("Optional: pass binary= for PE/Mach-O static context alongside Frida")
+
+        status = derive_status(has_static=bool(binary and findings.get("static")), dyn=dyn)
+        hint = dyn.get("hint") if isinstance(dyn, dict) else None
+        if status == "static" and not hint:
+            hint = "static-only path; dynamic not attached"
+        if status == "dry_run" and not hint:
+            hint = "Frida missing or dry-run — not attached"
 
         return ProbeResult(
-            ok=True,
+            ok=status != "error",
             platform=self.platform.value,
             target=target.label(),
+            status=status,
+            hint=hint,
+            next_steps=next_steps,
+            blocking_issues=blocking,
             recommendation=recommendation,
             risk=risk,
             artifacts=arts,
             findings=findings,
+            error=dyn.get("error") if status == "error" else (static.get("error") if status == "error" else None),
             started_at=started,
             finished_at=datetime.now(UTC),
-        )
+        ).ensure_status_fields()
 
     async def capture(self, target: TargetSpec, **kwargs: Any) -> dict[str, Any]:
         process = target.process or kwargs.get("process")

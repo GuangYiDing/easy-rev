@@ -26,8 +26,15 @@ entry:
   playbook: playbook.yaml
   hooks: {hooks}
 defaults: {{}}
+scope:
+  auth:
+    status: pending
+    basis: unknown
+  network_profile: offline
+  # full gate lives in scope.yaml after case.init / pack.init --with-ops
 warnings:
   - "仅用于授权测试 / 自有业务场景；禁止未授权逆向"
+  - "ACT 前需 scope.auth.status=granted（见 scope.yaml / case.guard）"
 """
 
 PLAYBOOK_WEB = """\
@@ -116,6 +123,13 @@ easy-rev explore --platform {platform} ...
 easy-rev pack validate .
 ```
 
+## Ops（吸收 reverse-skill 作战契约）
+
+1. 编辑 `scope.yaml`：`auth.status=granted` + `network_profile` + `in_scope.assets`
+2. `easy-rev ai call case.guard -i '{{"path":"."}}'` 确认 ready
+3. 过程写 `evidence/`，结论写 `findings.md` / `path.md`
+4. 可复用模式脱敏回写 `skills/field-journal/`
+
 ## 说明
 
 请在授权范围内使用。根据目标修改 `playbook.yaml` 与 `hooks/`。
@@ -198,6 +212,7 @@ def init_pack(
     description: str = "",
     platform: str = "web",
     with_hooks: bool = False,
+    with_ops: bool = True,
 ) -> Path:
     dest = Path(dest)
     dest.mkdir(parents=True, exist_ok=True)
@@ -245,4 +260,30 @@ def init_pack(
             (hooks_dir / "crypto.js").write_text(HOOKS_FRIDA_CRYPTO, encoding="utf-8")
             if family == "mobile":
                 (hooks_dir / "network.js").write_text(HOOKS_FRIDA_NETWORK, encoding="utf-8")
+
+    if with_ops:
+        try:
+            from easy_rev.skill.evidence import ensure_ops_scaffold
+            from easy_rev.skill.scope import default_scope, write_scope
+
+            ensure_ops_scaffold(dest)
+            if not (dest / "scope.yaml").is_file():
+                write_scope(
+                    dest,
+                    default_scope(
+                        case_id=pack_id,
+                        primary={
+                            "web": "web-reverse",
+                            "desktop": "desktop-reverse",
+                            "mobile": "mobile-reverse",
+                        }.get(family, "general-re"),
+                        platform=family if family != "desktop" else (os_name if os_name != "null" else "desktop"),
+                        auth_status="pending",
+                        network_profile="offline",
+                        notes=description or name,
+                    ),
+                )
+        except Exception:
+            # ops is additive; pack scaffold must still succeed
+            pass
     return dest

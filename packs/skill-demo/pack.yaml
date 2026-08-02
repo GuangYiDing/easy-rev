@@ -1,0 +1,28 @@
+schema: easy-rev.pack/v1
+id: skill-demo
+name: skill-demo
+version: 0.1.0
+description: "demo web case"
+platform: web
+os: null
+author: ""
+license: MIT
+tags: []
+min_easy_rev: ">=0.1.0"
+target:
+  url: "https://example.com"
+  notes: "authorized target only"
+entry:
+  kind: declarative
+  playbook: playbook.yaml
+  hooks: null
+defaults: {}
+scope:
+  auth:
+    status: pending
+    basis: unknown
+  network_profile: offline
+  # full gate lives in scope.yaml after case.init / pack.init --with-ops
+warnings:
+  - "仅用于授权测试 / 自有业务场景；禁止未授权逆向"
+  - "ACT 前需 scope.auth.status=granted（见 scope.yaml / case.guard）"

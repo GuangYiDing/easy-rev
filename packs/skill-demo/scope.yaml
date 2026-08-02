@@ -1,0 +1,48 @@
+schema: easy-rev.scope/v1
+meta:
+  case_id: 20260802-skill-demo
+  created: '2026-08-02T16:24:55+00:00'
+  primary_skill: web-reverse
+  platform: web
+  lead_role: lead
+  specialist_roles: []
+auth:
+  status: granted
+  basis: own_system
+  evidence_of_auth: demo web case
+in_scope:
+  assets:
+  - https://example.com
+  surfaces:
+  - web
+  activities:
+  - recon
+  - reverse
+  - pack
+  - report
+out_of_scope:
+  assets: []
+  activities:
+  - dos
+  - phishing_real_users
+  - data_exfil
+  - credential_theft
+network_profile:
+  mode: authorized_target_only
+  notes: demo web case
+deliverables:
+  report: true
+  field_journal: true
+  evidence: true
+  timeline: true
+  pack: true
+constraints:
+  stealth: low
+  data_handling: anonymize
+signoff:
+  ready_for_act: true
+  checklist:
+    auth_granted: true
+    assets_or_offline: true
+    network_profile_set: true
+    out_of_scope_reviewed: true

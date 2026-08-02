@@ -1,0 +1,19 @@
+schema: easy-rev.playbook/v1
+platform: web
+vars:
+  target_url: https://example.com
+steps:
+  - id: explore
+    action: web.explore
+    url: "{{{{ vars.target_url }}}}"
+    auto_fill: true
+    submit: false
+    write_pack: false
+
+  - id: analyze_sign
+    action: web.auto_sign
+    url: "{{{{ vars.target_url }}}}"
+
+  - id: export
+    action: artifact.export
+    include: [capture, har, signing]

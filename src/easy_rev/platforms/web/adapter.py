@@ -72,8 +72,11 @@ class WebAdapter(PlatformAdapter):
                 ok=False,
                 platform="web",
                 target=target.label(),
+                status="error",
+                confidence="none",
                 error="url required for web explore",
-            )
+                blocking_issues=["missing:url"],
+            ).ensure_status_fields()
         args = {**kwargs, "url": url}
         started = datetime.now(UTC)
         try:
@@ -83,10 +86,13 @@ class WebAdapter(PlatformAdapter):
                 ok=False,
                 platform="web",
                 target=url,
+                status="error",
+                confidence="none",
                 error=str(e),
+                blocking_issues=[f"explore_exception:{e}"],
                 started_at=started,
                 finished_at=datetime.now(UTC),
-            )
+            ).ensure_status_fields()
         arts: list[CaptureArtifact] = []
         if raw.get("capture_path"):
             arts.append(
@@ -100,14 +106,46 @@ class WebAdapter(PlatformAdapter):
             arts.append(
                 CaptureArtifact(kind=ArtifactKind.HAR, path=str(raw["har_path"]))
             )
-        if raw.get("pack_path"):
+        pack_path = raw.get("pack_path")
+        if not pack_path and isinstance(raw.get("pack"), dict):
+            pack_path = raw["pack"].get("path") or raw["pack"].get("pack_path")
+        if pack_path:
             arts.append(
-                CaptureArtifact(kind=ArtifactKind.PACK, path=str(raw["pack_path"]))
+                CaptureArtifact(kind=ArtifactKind.PACK, path=str(pack_path))
             )
+
+        status = str(raw.get("status") or ("attached" if raw.get("ok", True) else "error"))
+        blocking: list[str] = []
+        for dep in raw.get("missing_deps") or []:
+            blocking.append(f"missing:{dep}")
+        if raw.get("error") and status in {"degraded", "error"}:
+            blocking.append(f"capture:{raw.get('error')}")
+        next_steps = list(raw.get("next_steps") or [])
+        confidence = raw.get("confidence")
+        if confidence is None:
+            if status == "attached" and (raw.get("api_count") or 0) > 0:
+                confidence = "high"
+            elif status == "attached":
+                confidence = "medium"
+            elif status in {"offline", "degraded", "dry_run"}:
+                confidence = "low"
+            elif status == "error":
+                confidence = "none"
+            else:
+                confidence = "medium"
+
         return ProbeResult(
-            ok=True,
+            ok=bool(raw.get("ok", True)) and status != "error",
             platform="web",
-            target=url,
+            target=str(raw.get("url") or url),
+            status=status,
+            attached=bool(raw.get("attached", status == "attached")),
+            dry_run=bool(raw.get("dry_run", status == "dry_run")),
+            degraded=bool(raw.get("degraded", status in {"dry_run", "offline", "degraded"})),
+            confidence=str(confidence),
+            hint=raw.get("hint"),
+            next_steps=next_steps,
+            blocking_issues=blocking,
             recommendation=raw.get("recommendation"),
             risk=raw.get("risk"),
             artifacts=arts,
@@ -118,20 +156,56 @@ class WebAdapter(PlatformAdapter):
                 "signing": raw.get("signing"),
                 "dependency_graph": raw.get("dependency_graph"),
                 "js_analysis": raw.get("js_analysis"),
+                "suggested_http_steps": raw.get("suggested_http_steps"),
+                "notes": raw.get("notes"),
+                "pack": raw.get("pack"),
             },
+            message=raw.get("message"),
+            error=raw.get("error"),
+            capture_path=str(raw["capture_path"]) if raw.get("capture_path") else None,
+            har_path=str(raw["har_path"]) if raw.get("har_path") else None,
+            pack_path=str(pack_path) if pack_path else None,
             started_at=started,
             finished_at=datetime.now(UTC),
-        )
+        ).ensure_status_fields()
 
     async def capture(self, target: TargetSpec, **kwargs: Any) -> dict[str, Any]:
         from easy_rev.platforms.web.re.capture_flow import run_site_capture
 
         url = target.url or kwargs.get("url")
         if not url:
-            return {"ok": False, "error": "url required"}
+            return {
+                "ok": False,
+                "status": "error",
+                "attached": False,
+                "confidence": "none",
+                "error": "url required",
+            }
         args = {**kwargs, "url": url}
-        result = await run_site_capture(args)
-        result["ok"] = True
+        try:
+            result = await run_site_capture(args)
+        except Exception as e:  # noqa: BLE001
+            return {
+                "ok": False,
+                "status": "error",
+                "attached": False,
+                "confidence": "none",
+                "error": str(e),
+                "url": url,
+            }
+        if not isinstance(result, dict):
+            return {"ok": True, "status": "attached", "result": result, "url": url}
+        # Preserve explicit failure; default success path is attached browser capture
+        if "ok" not in result:
+            result["ok"] = not bool(result.get("error"))
+        result.setdefault("status", "attached" if result.get("ok") else "error")
+        result.setdefault("attached", result.get("status") == "attached")
+        result.setdefault(
+            "confidence",
+            "high" if result.get("ok") and (result.get("apis") or result.get("capture_path")) else (
+                "none" if not result.get("ok") else "medium"
+            ),
+        )
         return result
 
     async def analyze(self, target: TargetSpec, **kwargs: Any) -> dict[str, Any]:

@@ -98,14 +98,24 @@ def _resolve_action(step: dict[str, Any]) -> tuple[str | None, dict[str, Any]]:
 
 
 def _render_vars(value: Any, variables: dict[str, Any]) -> Any:
-    """Very small {{ vars.x }} interpolator for strings."""
+    """Small {{ vars.x }} / {{ pack.id }} interpolator for strings."""
     if isinstance(value, str) and "{{" in value:
         out = value
+        pack = variables.get("_pack") if isinstance(variables.get("_pack"), dict) else {}
+        # pack meta shortcuts
+        for pk, pv in (pack or {}).items():
+            if isinstance(pv, (str, int, float, bool)):
+                out = out.replace(f"{{{{ pack.{pk} }}}}", str(pv))
+                out = out.replace(f"{{{{pack.{pk}}}}}", str(pv))
         for k, v in variables.items():
             if k.startswith("_"):
                 continue
+            if isinstance(v, (dict, list)):
+                continue
             out = out.replace(f"{{{{ vars.{k} }}}}", str(v))
             out = out.replace(f"{{{{vars.{k}}}}}", str(v))
+            out = out.replace(f"{{{{ {k} }}}}", str(v))
+            out = out.replace(f"{{{{{k}}}}}", str(v))
         return out
     if isinstance(value, dict):
         return {k: _render_vars(v, variables) for k, v in value.items()}
@@ -134,6 +144,25 @@ async def run_pack(
             "error": "pack validation failed",
             "validation": validation,
         }
+
+    # Scope gate for real execution (dry_run always allowed for planning)
+    scope_gate = None
+    if not dry_run:
+        try:
+            from easy_rev.skill.case import case_guard
+
+            scope_gate = case_guard(root)
+            if not scope_gate.get("ready"):
+                return {
+                    "ok": False,
+                    "error": "scope gate blocked execution",
+                    "status": "blocked",
+                    "scope_gate": scope_gate,
+                    "validation": validation,
+                    "hint": "set scope.auth.status=granted and network_profile; or use --dry-run",
+                }
+        except Exception as e:  # noqa: BLE001
+            scope_gate = {"ok": False, "error": str(e)}
 
     steps, source, variables = _load_steps(root)
     if vars_override:
@@ -235,6 +264,7 @@ async def run_pack(
         "dry_planned": sum(1 for r in results if r.get("mode") == "dry_run"),
         "steps": results,
         "validation": validation,
+        "scope_gate": scope_gate,
     }
     # persist report
     report_path = root / ("run-dry-report.json" if dry_run else "run-report.json")

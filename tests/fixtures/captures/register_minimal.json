@@ -1,0 +1,24 @@
+{
+  "url": "https://ex.test/signup",
+  "apis": [
+    {
+      "method": "POST",
+      "url": "https://api.ex.test/v1/register",
+      "score": 12,
+      "tags": ["register_keyword", "json_body"],
+      "headers": {
+        "content-type": "application/json",
+        "authorization": "Bearer test-token-should-redact"
+      },
+      "post_data": "{\"email\":\"a@b.c\",\"password\":\"secret\"}",
+      "status": 201
+    },
+    {
+      "method": "GET",
+      "url": "https://api.ex.test/v1/config",
+      "score": 3,
+      "tags": ["config"],
+      "status": 200
+    }
+  ]
+}

@@ -1,0 +1,21 @@
+schema: easy-rev.playbook/v1
+platform: desktop
+vars:
+  process: "SimplySign Desktop"
+  binary: "/Applications/SimplySign Desktop.app/Contents/MacOS/SimplySign Desktop"
+  pkcs11: "/usr/local/lib/libSimplySignPKCS.dylib"
+steps:
+  - id: static
+    action: desktop.static
+    binary: "{{ vars.binary }}"
+
+  - id: attach
+    action: desktop.attach
+    process: "{{ vars.process }}"
+    scripts:
+      - hooks/session_trace.js
+      - hooks/crypto.js
+
+  - id: dump
+    action: desktop.dump
+    include: [modules, exports, strings]

@@ -25,6 +25,8 @@ app = typer.Typer(
 )
 ai_app = typer.Typer(help="AI / Agent tool surface (JSON in / JSON out)", no_args_is_help=True)
 pack_app = typer.Typer(help="Target Pack management", no_args_is_help=True)
+case_app = typer.Typer(help="Case scope / evidence ops", no_args_is_help=True)
+skill_app = typer.Typer(help="Skill router / field journal", no_args_is_help=True)
 web_app = typer.Typer(help="Web reverse engineering", no_args_is_help=True)
 desktop_app = typer.Typer(help="Desktop reverse engineering (Windows/macOS)", no_args_is_help=True)
 mobile_app = typer.Typer(help="Mobile reverse engineering (Android/iOS)", no_args_is_help=True)
@@ -32,6 +34,8 @@ re_app = typer.Typer(help="Web RE sessions & Chrome bridge (compat)", no_args_is
 
 app.add_typer(ai_app, name="ai")
 app.add_typer(pack_app, name="pack")
+app.add_typer(case_app, name="case")
+app.add_typer(skill_app, name="skill")
 app.add_typer(web_app, name="web")
 app.add_typer(desktop_app, name="desktop")
 app.add_typer(mobile_app, name="mobile")
@@ -210,8 +214,14 @@ def ai_describe(name: str = typer.Argument(...)) -> None:
 
 
 @ai_app.command("playbook")
-def ai_playbook() -> None:
-    console.print(playbook_text())
+def ai_playbook(
+    platform: str | None = typer.Option(
+        None, "--platform", "-p", help="Optional: web|windows|macos|android|ios"
+    ),
+    static: bool = typer.Option(False, "--static", help="Skip doctor-aware dynamic section"),
+) -> None:
+    """Print RE playbook (optionally tailored to platform + current preflight)."""
+    console.print(playbook_text(platform, dynamic=not static))
 
 
 @ai_app.command("call")
@@ -240,6 +250,7 @@ def pack_init(
     platform: str = typer.Option("web", "--platform", "-p"),
     name: str | None = typer.Option(None, "--name"),
     with_hooks: bool = typer.Option(False, "--with-hooks"),
+    with_ops: bool = typer.Option(True, "--with-ops/--no-ops", help="scope/evidence scaffold"),
 ) -> None:
     path = init_pack(
         dest or Path(f"./packs/{pack_id}"),
@@ -247,6 +258,7 @@ def pack_init(
         name=name,
         platform=platform,
         with_hooks=with_hooks,
+        with_ops=with_ops,
     )
     console.print(f"Created pack at {path}")
 
@@ -305,6 +317,81 @@ def mcp_cmd() -> None:
     from easy_rev.mcp_server import main as mcp_main
 
     mcp_main()
+
+
+
+
+@app.command("route")
+def route_cmd(
+    hint: str = typer.Argument(..., help="Task one-liner"),
+    platform: str | None = typer.Option(None, "--platform", "-p"),
+) -> None:
+    """PRIMARY skill router (task → platform/tools/workflow)."""
+    result = _run(call_tool("route", {"hint": hint, **({"platform": platform} if platform else {})}))
+    _print_result(result)
+
+
+@case_app.command("init")
+def case_init_cmd(
+    hint: str = typer.Option("", "--hint", "-h", help="Task description"),
+    case_name: str | None = typer.Option(None, "--name"),
+    dest: Path | None = typer.Option(None, "--dest"),
+    platform: str | None = typer.Option(None, "--platform", "-p"),
+    auth_granted: bool = typer.Option(False, "--auth-granted"),
+    auth_basis: str = typer.Option("unknown", "--auth-basis"),
+    network_profile: str = typer.Option("offline", "--network-profile"),
+    target: str | None = typer.Option(None, "--target"),
+    with_hooks: bool = typer.Option(False, "--with-hooks"),
+) -> None:
+    """Initialize case/pack with scope gate + evidence scaffold."""
+    args: dict[str, Any] = {
+        "hint": hint,
+        "auth_granted": auth_granted,
+        "auth_basis": auth_basis,
+        "network_profile": network_profile,
+        "with_hooks": with_hooks,
+    }
+    if case_name:
+        args["case_name"] = case_name
+    if dest:
+        args["dest"] = str(dest)
+    if platform:
+        args["platform"] = platform
+    if target:
+        args["target"] = target
+    result = _run(call_tool("case.init", args))
+    _print_result(result)
+
+
+@case_app.command("guard")
+def case_guard_cmd(
+    path: Path = typer.Argument(..., exists=True, file_okay=False, dir_okay=True),
+    force: bool = typer.Option(False, "--force"),
+) -> None:
+    """Check whether target ACT is allowed (scope gate)."""
+    result = _run(call_tool("case.guard", {"path": str(path), "force": force}))
+    _print_result(result)
+    raise typer.Exit(code=int(result.get("exit_code") or (0 if result.get("ready") else 2)))
+
+
+@skill_app.command("list")
+def skill_list_cmd() -> None:
+    """List bundled methodology skills."""
+    result = _run(call_tool("skill.list", {}))
+    _print_result(result)
+
+
+@skill_app.command("journal-search")
+def journal_search_cmd(
+    query: str = typer.Argument(""),
+    platform: str | None = typer.Option(None, "--platform", "-p"),
+) -> None:
+    """Search anonymized field journal."""
+    args: dict[str, Any] = {"query": query}
+    if platform:
+        args["platform"] = platform
+    result = _run(call_tool("journal.search", args))
+    _print_result(result)
 
 
 # ----- Web -----

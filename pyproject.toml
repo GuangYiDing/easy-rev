@@ -95,7 +95,7 @@ packages = ["src/easy_rev"]
 "src/easy_rev/platforms/mobile/scripts" = "easy_rev/platforms/mobile/scripts"
 
 [tool.hatch.build.targets.sdist]
-include = ["src/easy_rev", "packs", "docs", "extensions", "README.md", "tests"]
+include = ["src/easy_rev", "packs", "docs", "skills", "extensions", "README.md", "tests"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
