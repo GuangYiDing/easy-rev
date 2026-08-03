@@ -19,7 +19,7 @@ from easy_rev.pack.template import init_pack
 
 app = typer.Typer(
     name="easy-rev",
-    help="Easy-Rev: commercial multi-platform reverse engineering (Web / Desktop / Mobile)",
+    help="Easy-Rev: multi-platform reverse engineering (Web / Desktop / Mobile)",
     no_args_is_help=True,
     add_completion=False,
 )

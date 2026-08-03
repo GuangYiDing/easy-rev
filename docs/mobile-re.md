@@ -78,7 +78,7 @@ easy-rev ai call mobile.scripts -i '{"name":"ios_crypto"}'
 - 生产 App 的 pinning/加固绕过涉及法律与 ToS，默认模板仅为结构示意
 - 勿将含 token 的 capture 提交公共仓库
 
-## 已具备的商业深度
+## 已具备的深度
 
 - **APK**：包名/权限/URL/多 DEX 混淆线索/native so、`network_security_config` pin-set、META-INF 签名线索
 - **IPA**：CFBundleIdentifier、MinimumOSVersion、NSPinnedDomains/TrustKit、framework 枚举

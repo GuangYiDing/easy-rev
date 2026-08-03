@@ -1,6 +1,6 @@
 # Architecture — Easy-Rev
 
-商业级多端逆向框架：统一 `PlatformAdapter`，CLI / AI JSON 与平台解耦。
+多端逆向框架：统一 `PlatformAdapter`，CLI / AI JSON 与平台解耦。
 
 ## 分层
 

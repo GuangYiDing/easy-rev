@@ -1,7 +1,7 @@
 # Easy-Rev
 
 <p align="center">
-  <strong>商业级多端逆向工程框架</strong><br/>
+  <strong>多端逆向工程框架</strong><br/>
   Web · Desktop (Windows / macOS) · Mobile (Android / iOS)
 </p>
 

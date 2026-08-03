@@ -1,3 +1,3 @@
-"""Easy-Rev: commercial multi-platform reverse engineering framework."""
+"""Easy-Rev: multi-platform reverse engineering framework."""
 
 __version__ = "0.1.0"
