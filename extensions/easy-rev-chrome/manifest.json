@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Easy-Rev Reverse",
-  "version": "0.3.0",
+  "version": "0.3.3",
   "description": "一键录制当前页网络/签名流量，空闲自动上传到本机 Easy-Rev bridge。",
   "permissions": [
     "activeTab",
@@ -11,12 +11,17 @@
     "notifications",
     "scripting",
     "storage",
-    "tabs"
+    "tabs",
+    "webNavigation",
+    "webRequest"
   ],
   "host_permissions": [
     "http://127.0.0.1/*",
     "http://localhost/*",
-    "<all_urls>"
+    "<all_urls>",
+    "https://cloudsign.webnotarius.pl/*",
+    "https://*.webnotarius.pl/*",
+    "https://*.certum.pl/*"
   ],
   "action": {
     "default_title": "Easy-Rev：点此录制 / 查看状态",

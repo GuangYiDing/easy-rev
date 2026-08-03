@@ -33,7 +33,7 @@ let resumeAttempted = false;
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (!msg || !msg.type) return;
   if (msg.type === "ping") {
-    sendResponse({ ok: true, version: "0.3.0" });
+    sendResponse({ ok: true, version: "0.3.3" });
     return;
   }
   if (msg.type === "analyze") {
@@ -119,10 +119,36 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
     const tabId = Number(tick[1]);
     const sess = recordSessions.get(tabId);
     if (!sess || sess.finalizing) return;
+    try {
+      const tab = await chrome.tabs.get(tabId);
+      if (tab && tab.url && tab.url !== sess._lastPolledUrl) {
+        sess._lastPolledUrl = tab.url;
+        pushSessionEvent(
+          sess,
+          "EasyRev.navigation",
+          { phase: "rec_tick_poll", url: tab.url, title: tab.title || "" },
+          /code=OC-|oauth|redirect|login|callbackAuthorize|access_token|cloudsign|certum/i.test(
+            tab.url
+          )
+        );
+      }
+      if (
+        sess._needsReattach &&
+        tab &&
+        tab.url &&
+        tab.url.startsWith("http") &&
+        !sess._reattaching
+      ) {
+        sess._reattaching = true;
+        const ok = await reattachDebugger(sess, "tick_http");
+        sess._reattaching = false;
+        if (ok) sess._needsReattach = false;
+      }
+    } catch (e) {}
     await persistSessionSnapshot(tabId);
     await pushHud(tabId);
     // reschedule short tick (alarms `when` is reliable; period min=1min)
-    chrome.alarms.create(`rec-tick-${tabId}`, { when: Date.now() + 2000 });
+    chrome.alarms.create(`rec-tick-${tabId}`, { when: Date.now() + 1000 });
     // check idle/max in case idle alarm was missed after SW sleep
     await maybeAutoStop(tabId);
     return;
@@ -166,7 +192,57 @@ chrome.debugger.onDetach.addListener((source, reason) => {
   if (sess && !sess.finalizing) {
     sess.notes = sess.notes || [];
     sess.notes.push(`debugger detached: ${reason || "unknown"}`);
-    // Canceled_By_User often means DevTools opened — still flush what we have
+    const r = String(reason || "");
+    // Site isolation / full document navigation often yields target_closed.
+    // Try reattach first so redirect chains (code=) can still be captured.
+    if (r === "target_closed" || r === "canceled") {
+      sess._needsReattach = true;
+      if (!sess._reattaching) {
+        sess._reattaching = true;
+        // Do not immediately finalize: password managers may steal the tab for a moment.
+        reattachDebugger(sess, r)
+          .then((ok) => {
+            sess._reattaching = false;
+            if (ok) {
+              sess._needsReattach = false;
+              return;
+            }
+            // Keep recording via webNavigation/tabs watchers for a short grace period
+            sess.notes.push(`reattach failed after ${r}; grace watch 8s for http(s) URL`);
+            setTimeout(() => {
+              if (!recordSessions.has(tabId)) return;
+              const s2 = recordSessions.get(tabId);
+              if (!s2 || s2.finalizing) return;
+              if (s2._needsReattach) {
+                chrome.tabs
+                  .get(tabId)
+                  .then((tab) => {
+                    if (tab && tab.url) {
+                      pushSessionEvent(
+                        s2,
+                        "EasyRev.navigation",
+                        { phase: "pre_stop_tab_url", url: tab.url, reason: r },
+                        /code=OC-|oauth|redirect|login|callbackAuthorize/i.test(tab.url || "")
+                      );
+                    }
+                  })
+                  .catch(() => {})
+                  .finally(() => {
+                    if (recordSessions.has(tabId) && !recordSessions.get(tabId).finalizing) {
+                      recordStop({ tabId, reason: `detach:${r}` }).catch(() => {});
+                    }
+                  });
+              }
+            }, 8000);
+          })
+          .catch(() => {
+            sess._reattaching = false;
+            recordStop({ tabId, reason: `detach:${r}` }).catch(() => {});
+          });
+      }
+      return;
+    }
+    // Canceled_By_User / replaced_with_devtools — flush what we have
     recordStop({ tabId, reason: `detach:${reason || "unknown"}` }).catch(() => {});
   }
   liveSessions.delete(tabId);
@@ -263,17 +339,261 @@ function isInterestingNetwork(method, params) {
   ) {
     return true;
   }
+  if (method === "EasyRev.navigation") {
+    const u = (params && (params.url || params.redirectUrl)) || "";
+    return /code=OC-|oauth|access_token|refresh_token|redirect|login|callbackAuthorize|authorize|idp\//i.test(u);
+  }
   if (method !== "Network.requestWillBeSent" || !params) return false;
   const t = params.type || "";
   const req = params.request || {};
   const u = req.url || "";
   const m = req.method || "GET";
   if (t === "XHR" || t === "Fetch") return true;
+  if (t === "Document" || t === "Other") {
+    if (/code=OC-|oauth|access_token|refresh_token|redirect|login|callbackAuthorize|authorize|idp\//i.test(u)) {
+      return true;
+    }
+  }
   if (m === "POST" || m === "PUT" || m === "PATCH" || m === "DELETE") return true;
-  return /\/api\/|\/rest\/|\/ws\/|graphql|livekit|imagine|media|auth|signup|register|token|stream|conversation|generate|video|voice/i.test(
+  return /\/api\/|\/rest\/|\/ws\/|graphql|livekit|imagine|media|auth|signup|register|token|stream|conversation|generate|video|voice|oauth|redirect|login|callbackAuthorize/i.test(
     u
   );
 }
+
+function pushSessionEvent(sess, method, params, markInteresting) {
+  if (!sess || sess.finalizing) return;
+  sess.events.push({ method, params: params || {}, _ts: Date.now() });
+  if (sess.events.length > 5000) {
+    sess.events.splice(0, sess.events.length - 4000);
+  }
+  if (markInteresting || isInterestingNetwork(method, params || {})) {
+    sess.interestingCount = (sess.interestingCount || 0) + 1;
+    sess.lastInterestingAt = Date.now();
+    if (sess.auto_idle && sess.interestingCount >= sess.min_interesting) {
+      chrome.alarms.create(`rec-idle-${sess.tabId}`, {
+        when: Date.now() + (sess.idle_s || 12) * 1000,
+      });
+    }
+    setBadge(String(sess.interestingCount || "REC"), "#ea4335").catch(() => {});
+  }
+}
+
+function bindWebNavigation() {
+  if (globalThis.__easyRevWebNavBound) return;
+  globalThis.__easyRevWebNavBound = true;
+
+  const onNav = (phase) => (details) => {
+    try {
+      if (!details || details.frameId !== 0) return;
+      const tabId = details.tabId;
+      const sess = recordSessions.get(tabId);
+      if (!sess || sess.finalizing) return;
+      const url = details.url || "";
+      const redirectUrl = details.redirectUrl || "";
+      pushSessionEvent(
+        sess,
+        "EasyRev.navigation",
+        {
+          phase,
+          url,
+          redirectUrl: redirectUrl || undefined,
+          transitionType: details.transitionType,
+          transitionQualifiers: details.transitionQualifiers,
+          tabId,
+        },
+        /code=OC-|access_token|refresh_token|oauth|callbackAuthorize|\/redirect/i.test(
+          url + " " + redirectUrl
+        )
+      );
+    } catch (e) {}
+  };
+
+  chrome.webNavigation.onBeforeNavigate.addListener(onNav("onBeforeNavigate"));
+  chrome.webNavigation.onCommitted.addListener(onNav("onCommitted"));
+  chrome.webNavigation.onDOMContentLoaded.addListener(onNav("onDOMContentLoaded"));
+  chrome.webNavigation.onCompleted.addListener(onNav("onCompleted"));
+  chrome.webNavigation.onBeforeRedirect.addListener(onNav("onBeforeRedirect"));
+  chrome.webNavigation.onHistoryStateUpdated.addListener(onNav("onHistoryStateUpdated"));
+  chrome.webNavigation.onReferenceFragmentUpdated.addListener(onNav("onReferenceFragmentUpdated"));
+}
+
+async function reattachDebugger(sess, reason) {
+  const tabId = sess.tabId;
+  for (let i = 0; i < 12; i++) {
+    if (sess.finalizing || !recordSessions.has(tabId)) return false;
+    await sleep(200 + i * 150);
+    try {
+      const tab = await chrome.tabs.get(tabId);
+      if (!tab) return false;
+      const url = tab.url || "";
+      // Password managers may briefly take the tab to chrome-extension:// — wait for http(s)
+      if (
+        !url ||
+        url.startsWith("chrome-extension://") ||
+        url.startsWith("chrome://") ||
+        url.startsWith("devtools://") ||
+        url.startsWith("about:")
+      ) {
+        sess.notes.push(`reattach wait non-http url attempt ${i + 1}: ${(url || "").slice(0, 120)}`);
+        pushSessionEvent(
+          sess,
+          "EasyRev.navigation",
+          { phase: "reattach_wait", url, reason: reason || "unknown", attempt: i + 1 },
+          /code=OC-/.test(url)
+        );
+        continue;
+      }
+      try {
+        await chrome.debugger.detach({ tabId });
+      } catch (e) {}
+      sess.target = await attachDebugger(tabId);
+      if (sess.fullRe) {
+        const inj = await injectFullHooks(sess.target);
+        if (inj && inj.ok) {
+          sess.hooksInjected = true;
+          sess.notes.push("page_hooks re-injected after reattach");
+        }
+      }
+      ensureHud(tabId).catch(() => {});
+      pushSessionEvent(
+        sess,
+        "EasyRev.navigation",
+        {
+          phase: "debugger_reattached",
+          url,
+          reason: reason || "unknown",
+          attempt: i + 1,
+        },
+        /code=OC-|oauth|redirect|login|callbackAuthorize|access_token/i.test(url)
+      );
+      sess.notes.push(`debugger reattached after ${reason || "detach"} (attempt ${i + 1}) url=${url.slice(0, 160)}`);
+      return true;
+    } catch (e) {
+      sess.notes.push(
+        `reattach attempt ${i + 1} failed: ${e && e.message ? e.message : e}`
+      );
+    }
+  }
+  // final tab url snapshot even if still non-http
+  try {
+    const tab = await chrome.tabs.get(tabId);
+    if (tab && tab.url) {
+      pushSessionEvent(
+        sess,
+        "EasyRev.navigation",
+        { phase: "reattach_gave_up", url: tab.url, reason: reason || "unknown" },
+        /code=OC-|oauth|redirect|login|callbackAuthorize/i.test(tab.url)
+      );
+    }
+  } catch (e) {}
+  return false;
+}
+
+
+function bindWebRequestWatchers() {
+  if (globalThis.__easyRevWebReqBound) return;
+  if (!chrome.webRequest || !chrome.webRequest.onBeforeRedirect) {
+    console.warn("webRequest API unavailable");
+    return;
+  }
+  globalThis.__easyRevWebReqBound = true;
+
+  const interesting = (url) =>
+    /cloudsign\.webnotarius\.pl|certum\.pl|code=OC-|oauth|callbackAuthorize|\/redirect|access_token|refresh_token|idp\//i.test(
+      url || ""
+    );
+
+  const pushFromDetails = (phase, details) => {
+    try {
+      const tabId = details.tabId;
+      if (tabId == null || tabId < 0) return;
+      const sess = recordSessions.get(tabId);
+      if (!sess || sess.finalizing) return;
+      const url = details.url || "";
+      const redirectUrl = details.redirectUrl || "";
+      pushSessionEvent(
+        sess,
+        "EasyRev.navigation",
+        {
+          phase,
+          url,
+          redirectUrl: redirectUrl || undefined,
+          statusCode: details.statusCode,
+          method: details.method,
+          type: details.type,
+          requestId: details.requestId,
+        },
+        interesting(url) || interesting(redirectUrl)
+      );
+    } catch (e) {}
+  };
+
+  // These fire even when debugger dies / tab is hijacked by password managers.
+  chrome.webRequest.onBeforeRequest.addListener(
+    (d) => pushFromDetails("webRequest.onBeforeRequest", d),
+    { urls: ["<all_urls>"] },
+    ["requestBody"]
+  );
+  chrome.webRequest.onBeforeRedirect.addListener(
+    (d) => pushFromDetails("webRequest.onBeforeRedirect", d),
+    { urls: ["<all_urls>"] },
+    ["responseHeaders"]
+  );
+  chrome.webRequest.onCompleted.addListener(
+    (d) => pushFromDetails("webRequest.onCompleted", d),
+    { urls: ["<all_urls>"] },
+    ["responseHeaders"]
+  );
+  chrome.webRequest.onErrorOccurred.addListener(
+    (d) => pushFromDetails("webRequest.onErrorOccurred", d),
+    { urls: ["<all_urls>"] }
+  );
+}
+
+
+function bindTabUrlWatchers() {
+  if (globalThis.__easyRevTabWatchBound) return;
+  globalThis.__easyRevTabWatchBound = true;
+  chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+    try {
+      const sess = recordSessions.get(tabId);
+      if (!sess || sess.finalizing) return;
+      const url = (changeInfo && changeInfo.url) || (tab && tab.url) || "";
+      if (!url) return;
+      // always record url changes / completed loads during recording
+      if (changeInfo.url || changeInfo.status === "loading" || changeInfo.status === "complete") {
+        pushSessionEvent(
+          sess,
+          "EasyRev.navigation",
+          {
+            phase: `tabs.onUpdated:${changeInfo.status || "url"}`,
+            url,
+            title: (tab && tab.title) || "",
+          },
+          /code=OC-|oauth|redirect|login|callbackAuthorize|access_token|certum|cloudsign/i.test(url)
+        );
+      }
+      // if debugger detached due to extension page, try reattach when back to http(s)
+      if (
+        sess._needsReattach &&
+        url.startsWith("http") &&
+        !sess._reattaching &&
+        !sess.finalizing
+      ) {
+        sess._reattaching = true;
+        reattachDebugger(sess, "tab_back_to_http")
+          .then((ok) => {
+            sess._reattaching = false;
+            if (ok) sess._needsReattach = false;
+          })
+          .catch(() => {
+            sess._reattaching = false;
+          });
+      }
+    } catch (e) {}
+  });
+}
+
 
 async function setBadge(text, color) {
   try {
@@ -323,6 +643,28 @@ function onDebuggerEvent(source, method, params) {
   const sess = recordSessions.get(tabId);
   if (!sess || sess.finalizing) return;
 
+  // Capture main-frame navigations (critical for OAuth code in redirect URL)
+  if (method === "Page.frameNavigated" || method === "Page.navigatedWithinDocument") {
+    const frame = (params && params.frame) || {};
+    const navUrl =
+      method === "Page.navigatedWithinDocument"
+        ? (params && params.url) || ""
+        : frame.url || "";
+    if (method === "Page.navigatedWithinDocument" || !frame.parentId) {
+      pushSessionEvent(
+        sess,
+        "EasyRev.navigation",
+        {
+          phase: method,
+          url: navUrl,
+          frameId: frame.id,
+          parentId: frame.parentId,
+        },
+        /code=OC-|oauth|redirect|login|callbackAuthorize|access_token/i.test(navUrl || "")
+      );
+    }
+  }
+
   // re-inject hooks after full navigation
   if (
     sess.fullRe &&
@@ -348,33 +690,24 @@ function onDebuggerEvent(source, method, params) {
   }
 
   if (method && method.startsWith("Network.")) {
-    sess.events.push({ method, params, _ts: Date.now() });
-    // soft cap memory
-    if (sess.events.length > 5000) {
-      sess.events.splice(0, sess.events.length - 4000);
+    // Keep redirectResponse chain (document form login -> 302 -> code)
+    pushSessionEvent(sess, method, params, isInterestingNetwork(method, params));
+    if (method === "Network.requestWillBeSent" && params && params.redirectResponse) {
+      const rr = params.redirectResponse || {};
+      pushSessionEvent(
+        sess,
+        "EasyRev.navigation",
+        {
+          phase: "Network.redirectResponse",
+          url: rr.url || "",
+          status: rr.status,
+          headers: rr.headers || {},
+          nextUrl: (params.request && params.request.url) || "",
+        },
+        true
+      );
     }
-    if (isInterestingNetwork(method, params)) {
-      sess.interestingCount = (sess.interestingCount || 0) + 1;
-      sess.lastInterestingAt = Date.now();
-      if (sess.auto_idle && sess.interestingCount >= sess.min_interesting) {
-        chrome.alarms.create(`rec-idle-${tabId}`, {
-          when: Date.now() + sess.idle_s * 1000,
-        });
-      }
-      const n = sess.interestingCount;
-      setBadge(n > 99 ? "99+" : String(n), "#ea4335");
-      persistRecordState({
-        mode: "record",
-        running: true,
-        tabId,
-        interesting: n,
-        events: sess.events.length,
-        message: `recording… interesting=${n} events=${sess.events.length}`,
-      });
-      // cheap throttle: persist every 3 interesting
-      if (n % 3 === 0) persistSessionSnapshot(tabId).catch(() => {});
-      pushHud(tabId).catch(() => {});
-    }
+    
   }
 }
 
@@ -731,7 +1064,12 @@ async function buildAndUploadCapture({
 
   let pageHooks = { installed: false, traces: [], crypto: [], signers: [] };
   let oracleTry = { ok: false, error: "skipped" };
-  if (fullRe) {
+  const canDebug = !!(target && target.tabId != null);
+  // Detect webRequest-only sessions: no Network.* events attached via debugger
+  const hasDebuggerNetwork = (events || []).some(
+    (ev) => ev && typeof ev.method === "string" && ev.method.startsWith("Network.")
+  );
+  if (fullRe && canDebug && hasDebuggerNetwork) {
     try {
       pageHooks = await dumpPageHooks(target);
     } catch (e) {
@@ -754,11 +1092,15 @@ async function buildAndUploadCapture({
     } catch (e) {
       oracleTry = { ok: false, error: String(e && e.message ? e.message : e) };
     }
+  } else if (!hasDebuggerNetwork) {
+    oracleTry = { ok: false, error: "webRequest-only mode" };
   }
 
-  try {
-    await fetchResponseBodies(target, events, 50);
-  } catch (e) {}
+  if (canDebug && hasDebuggerNetwork) {
+    try {
+      await fetchResponseBodies(target, events, 50);
+    } catch (e) {}
+  }
 
   const pageInfo = await snapshotDom(tabId);
   let cookies = [];
@@ -766,7 +1108,7 @@ async function buildAndUploadCapture({
     cookies = await chrome.cookies.getAll({ url: tab.url || pageInfo.href || "" });
   } catch (e) {}
 
-  if (!keepAttached) {
+  if (!keepAttached && canDebug) {
     try {
       await chrome.debugger.detach(target);
     } catch (e) {}
@@ -776,7 +1118,7 @@ async function buildAndUploadCapture({
   const title = (pageInfo && pageInfo.title) || (tab && tab.title) || "";
   const payload = {
     source: "easy-rev-chrome",
-    version: "0.3.0",
+    version: "0.3.3",
     url,
     title,
     tab_id: tabId,
@@ -966,31 +1308,41 @@ async function recordStart(opts) {
 
   const target = { tabId };
   let hooksInjected = false;
+  let debuggerAttached = false;
+  let effectiveFullRe = fullRe;
   bindDebuggerEvents();
+  bindWebNavigation();
+  bindTabUrlWatchers();
+  bindWebRequestWatchers();
   try {
     await attachDebugger(tabId);
+    debuggerAttached = true;
     if (fullRe) {
       const inj = await injectFullHooks(target);
       hooksInjected = !!(inj && inj.ok);
     }
   } catch (e) {
-    return {
-      ok: false,
-      error: `debugger attach failed: ${e && e.message ? e.message : e}`,
-      hint: "请关闭该标签页的 DevTools 后重试。Chrome 顶部若提示「正在调试」也请先结束其它调试。",
-    };
+    // 1Password / other extensions may block debugger attach on the tab.
+    // Fall back to webRequest + webNavigation + tabs URL watchers (enough for OAuth code).
+    const msg = e && e.message ? e.message : String(e);
+    effectiveFullRe = false;
+    hooksInjected = false;
+    debuggerAttached = false;
+    // continue — do not abort recording
+    var attachErr = msg;
   }
 
   const sess = {
     tabId,
-    target,
+    target: debuggerAttached ? target : { tabId },
     events: [],
     bridgeUrl,
     token,
     writePack,
     packId,
-    fullRe,
+    fullRe: effectiveFullRe,
     hooksInjected,
+    debuggerAttached,
     startedAt: Date.now(),
     lastInterestingAt: Date.now(),
     interestingCount: 0,
@@ -1000,12 +1352,27 @@ async function recordStart(opts) {
     auto_idle,
     finalizing: false,
     notes: [
-      "extension record mode v0.3",
-      hooksInjected ? "page_hooks injected" : "page_hooks skipped",
+      "extension record mode v0.3.3",
+      debuggerAttached
+        ? hooksInjected
+          ? "page_hooks injected"
+          : "page_hooks skipped"
+        : `debugger attach failed, webRequest-only mode: ${typeof attachErr !== "undefined" ? attachErr : "unknown"}`,
       `idle_s=${idle_s} max_s=${max_s} min_interesting=${min_interesting} auto_idle=${auto_idle}`,
     ],
   };
   recordSessions.set(tabId, sess);
+  // seed current URL so OAuth landing is not missed if user already on login page
+  try {
+    if (tab && tab.url) {
+      pushSessionEvent(
+        sess,
+        "EasyRev.navigation",
+        { phase: "record_start_url", url: tab.url, title: tab.title || "" },
+        /cloudsign|oauth|login|callbackAuthorize|redirect/i.test(tab.url)
+      );
+    }
+  } catch (e) {}
 
   chrome.alarms.create(`rec-max-${tabId}`, { when: Date.now() + max_s * 1000 });
   chrome.alarms.create(`rec-tick-${tabId}`, { when: Date.now() + 2000 });
@@ -1029,7 +1396,7 @@ async function recordStart(opts) {
     message: "已开始录制：正常操作页面即可，可关闭扩展弹窗",
   });
 
-  return {
+return {
     ok: true,
     mode: "record",
     tab_id: tabId,
@@ -1039,7 +1406,11 @@ async function recordStart(opts) {
     min_interesting,
     auto_idle,
     hooks_injected: hooksInjected,
-    hint: "在页面自由操作。空闲后自动上传，或点 HUD / 弹窗「结束并上传」。",
+    debugger_attached: debuggerAttached,
+    capture_mode: debuggerAttached ? (effectiveFullRe ? "full" : "network") : "webRequest-only",
+    hint: debuggerAttached
+      ? "在页面自由操作。空闲后自动上传，或点 HUD / 弹窗「结束并上传」。"
+      : "debugger 被其它扩展占用，已启用 webRequest-only 模式（可抓 OAuth 跳转/code）。建议暂时关闭 1Password 后重试完整模式。",
   };
 }
 

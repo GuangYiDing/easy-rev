@@ -1,0 +1,12 @@
+captures/
+**/sslkeys.log
+**/traffic.pcap
+**/session.json
+**/cert.pem
+**/totp.env
+**/raw_events.jsonl
+*.pem
+*.pfx
+*.p12
+*.key
+*.der

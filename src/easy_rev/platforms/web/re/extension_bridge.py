@@ -63,14 +63,81 @@ def network_events_to_entries(events: list[dict[str, Any]]) -> list[NetworkEntry
     """Convert chrome.debugger Network.* events into NetworkEntry list."""
     by_id: dict[str, NetworkEntry] = {}
     seq = 0
+    extras: list[NetworkEntry] = []
     for ev in events or []:
         if not isinstance(ev, dict):
             continue
         method = ev.get("method") or ""
         params = ev.get("params") or {}
+        if method == "EasyRev.navigation":
+            # OAuth redirects / full document navigations captured outside debugger
+            seq += 1
+            url = str(params.get("url") or params.get("redirectUrl") or params.get("nextUrl") or "")
+            if not url:
+                continue
+            headers = params.get("headers") or {}
+            if not isinstance(headers, dict):
+                headers = {}
+            status = params.get("status")
+            if status is None:
+                status = params.get("statusCode")
+            try:
+                status_i = int(status) if status is not None else None
+            except Exception:  # noqa: BLE001
+                status_i = None
+            extras.append(
+                NetworkEntry(
+                    id=seq,
+                    method="GET",
+                    url=url,
+                    resource_type="document",
+                    status=status_i,
+                    request_headers={},
+                    response_headers={str(k): str(v) for k, v in headers.items()},
+                    started_at=time.time(),
+                    tags=["navigation", str(params.get("phase") or "nav")],
+                )
+            )
+            # also keep redirect target if present and distinct
+            nxt = str(params.get("redirectUrl") or params.get("nextUrl") or "")
+            if nxt and nxt != url:
+                seq += 1
+                extras.append(
+                    NetworkEntry(
+                        id=seq,
+                        method="GET",
+                        url=nxt,
+                        resource_type="document",
+                        started_at=time.time(),
+                        tags=["navigation", "redirect-target"],
+                    )
+                )
+            continue
         if method == "Network.requestWillBeSent":
             req = params.get("request") or {}
             rid = str(params.get("requestId") or "")
+            # Preserve intermediate redirect responses (form login 302 chains)
+            redir = params.get("redirectResponse")
+            if isinstance(redir, dict) and redir.get("url"):
+                seq += 1
+                try:
+                    st = int(redir.get("status") or 0) or None
+                except Exception:  # noqa: BLE001
+                    st = None
+                extras.append(
+                    NetworkEntry(
+                        id=seq,
+                        method="GET",
+                        url=str(redir.get("url") or ""),
+                        resource_type=str(params.get("type") or "document").lower(),
+                        status=st,
+                        response_headers={
+                            str(k): str(v) for k, v in (redir.get("headers") or {}).items()
+                        },
+                        started_at=time.time(),
+                        tags=["redirectResponse"],
+                    )
+                )
             seq += 1
             url = str(req.get("url") or "")
             entry = NetworkEntry(
@@ -147,7 +214,9 @@ def network_events_to_entries(events: list[dict[str, Any]]) -> list[NetworkEntry
                 entry.response_body = body
             entry.response_body_bytes = entry.response_body_bytes or len(body)
 
-    return list(by_id.values())
+    entries = list(by_id.values()) + extras
+    entries.sort(key=lambda e: getattr(e, "id", 0) or 0)
+    return entries
 
 
 def build_capture_from_extension(payload: dict[str, Any]) -> dict[str, Any]:

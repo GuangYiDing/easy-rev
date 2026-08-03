@@ -17,6 +17,10 @@
 
 **不需要**整机 `--remote-debugging-port`。
 
+版本 **0.3.2** 进一步修复：登录后若被 1Password 等扩展短暂切到 `chrome-extension://`，会等待回到 http(s) 再 reattach，并用 `tabs.onUpdated` / 1s 轮询兜底记录 URL。
+
+版本 **0.3.1** 修复整页跳转丢包（`target_closed` 后自动重挂 debugger + `webNavigation` 兜底 OAuth `code`）。
+
 版本 **0.3.0** 体验重点：
 
 - 弹窗主路径只保留「开始 / 结束 / 取消」；设置收进折叠区
