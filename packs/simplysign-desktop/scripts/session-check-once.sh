@@ -84,7 +84,9 @@ set -e
 if [[ $RC -ne 0 ]]; then
   echo "[$(ts)] probe failed rc=$RC" >>"$LOG_FILE"
   tail -n 30 "$OUT" >>"$LOG_FILE" 2>/dev/null || true
-  notify "云会话失效或 PKCS 不可用：菜单栏 Connect with cloud，输入一次 OTP"
+  echo "[$(ts)] 尝试自动恢复（钥匙串 TOTP）" >>"$LOG_FILE"
+  SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  "$SCRIPT_DIR/auto-recover.sh" || notify "自动恢复失败：菜单栏 Connect with cloud，输入一次 OTP"
   exit 0
 fi
 

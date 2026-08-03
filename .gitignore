@@ -19,5 +19,11 @@ run-report.json
 run-dry-report.json
 .easy-rev/
 
+# SimplySign 敏感凭证：种子只应存在本机钥匙串，
+# 会话文件/明文种子一律不得入库
+totp.env
+simplysign-session/
+client_credentials.json
+
 # temp/office lock files
 .!*

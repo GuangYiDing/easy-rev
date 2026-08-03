@@ -20,8 +20,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import ssl
-import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -103,7 +104,19 @@ def http(
         return e.code, dict(e.headers.items()) if e.headers else {}, e.read()
 
 
-def refresh(session: dict) -> dict:
+def redact(text: str, max_len: int = 400) -> str:
+    """Mask token/secret values so credentials never land in CI logs."""
+    masked = re.sub(
+        r'"(access_token|refresh_token|client_secret|Authorization)"\s*:\s*"[^"]*"',
+        r'"\1":"<redacted>"',
+        text,
+    )
+    if len(masked) > max_len:
+        masked = masked[:max_len] + "…"
+    return masked
+
+
+def refresh(session: dict, *, verbose: bool = False) -> dict:
     xml = load_xml_oauth()
     client_id = session.get("client_id") or xml.get("OAuth2ClientId")
     client_secret = session.get("client_secret") or xml.get("OAuth2ClientSecret") or ""
@@ -129,8 +142,9 @@ def refresh(session: dict) -> dict:
         body=body,
     )
     text = raw.decode("utf-8", "replace")
-    print("refresh status", status)
-    print(text[:800])
+    if verbose:
+        print("refresh status", status)
+        print(redact(text))
     if status >= 400:
         # try Basic
         import base64
@@ -151,8 +165,9 @@ def refresh(session: dict) -> dict:
             body=urllib.parse.urlencode(form2).encode(),
         )
         text = raw.decode("utf-8", "replace")
-        print("refresh(basic) status", status)
-        print(text[:800])
+        if verbose:
+            print("refresh(basic) status", status)
+            print(redact(text))
     if status >= 400:
         raise SystemExit(2)
     try:
@@ -291,9 +306,22 @@ def sign_digest(
 
 def cmd_refresh(args: argparse.Namespace) -> int:
     s = load_session(Path(args.session))
-    s = refresh(s)
+    s = refresh(s, verbose=args.verbose)
     save_session(Path(args.session), s)
-    print("saved", args.session)
+    if args.json:
+        print(
+            json.dumps(
+                {
+                    "ok": True,
+                    "session": str(Path(args.session)),
+                    "access_token": "updated",
+                    "expires_in": s.get("expires_in"),
+                },
+                ensure_ascii=False,
+            )
+        )
+    else:
+        print("saved", args.session)
     return 0
 
 
@@ -317,7 +345,7 @@ def cmd_probe(args: argparse.Namespace) -> int:
 def cmd_sign(args: argparse.Namespace) -> int:
     s = load_session(Path(args.session))
     if args.refresh_first:
-        s = refresh(s)
+        s = refresh(s, verbose=False)
         save_session(Path(args.session), s)
     if args.file:
         import hashlib
@@ -331,13 +359,77 @@ def cmd_sign(args: argparse.Namespace) -> int:
     cert_pem = Path(cert).read_text(encoding="utf-8") if cert and Path(cert).exists() else cert or ""
     result = sign_digest(s, digest_hex, cert_pem, card_id=args.card_id)
     for d, sig in result.items():
-        print("digest", d)
-        print("signature", sig)
+        if args.json:
+            print(json.dumps({"ok": True, "digest": d, "signature": sig}, ensure_ascii=False))
+        else:
+            print("digest", d)
+            print("signature", sig)
     return 0
 
 
+def cmd_verify(args: argparse.Namespace) -> int:
+    """Verify a cloud-returned RSA signature over a SHA-256 digest."""
+    import hashlib
+    import subprocess
+    import tempfile
+
+    digest_hex = args.digest
+    if args.file:
+        digest_hex = hashlib.sha256(Path(args.file).read_bytes()).hexdigest().upper()
+    if not digest_hex or len(digest_hex.strip()) != 64:
+        raise SystemExit("need 64-hex --digest or --file")
+    digest_hex = digest_hex.strip().upper()
+
+    sig_arg = args.signature
+    if sig_arg.startswith("@"):
+        sig = Path(sig_arg[1:]).read_text().strip()
+    else:
+        sig = sig_arg
+    try:
+        sig_bytes = bytes.fromhex(sig)
+    except Exception as e:
+        raise SystemExit(f"invalid signature hex: {e}") from e
+
+    cert_arg = args.cert or (args.session and load_session(Path(args.session)).get("cert_pem"))
+    cert_text = Path(cert_arg).read_text() if cert_arg and Path(cert_arg).exists() else cert_arg or ""
+    if "-----BEGIN CERTIFICATE-----" not in cert_text:
+        raise SystemExit("need --cert PEM or session cert_pem")
+
+    with tempfile.TemporaryDirectory() as td:
+        td = Path(td)
+        (td / "digest.bin").write_bytes(bytes.fromhex(digest_hex))
+        (td / "sig.bin").write_bytes(sig_bytes)
+        (td / "cert.pem").write_text(cert_text)
+        pub = subprocess.run(
+            ["openssl", "x509", "-in", str(td / "cert.pem"), "-pubkey", "-noout"],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
+        (td / "pub.pem").write_text(pub)
+        r = subprocess.run(
+            [
+                "openssl", "pkeyutl", "-verify",
+                "-pubin", "-inkey", str(td / "pub.pem"),
+                "-in", str(td / "digest.bin"),
+                "-sigfile", str(td / "sig.bin"),
+                "-pkeyopt", "digest:sha256",
+            ],
+            capture_output=True,
+            text=True,
+        )
+    if r.returncode == 0:
+        print(json.dumps({"ok": True, "digest": digest_hex, "signature_ok": True}))
+        return 0
+    print(json.dumps({"ok": False, "signature_ok": False, "error": r.stderr.strip()[:300]}))
+    return 1
+
+
 def cmd_show_config(_: argparse.Namespace) -> int:
-    print(json.dumps(load_xml_oauth(), indent=2))
+    config = load_xml_oauth()
+    if "OAuth2ClientSecret" in config:
+        config["OAuth2ClientSecret"] = "<redacted>"
+    print(json.dumps(config, indent=2))
     print("session_path", SESSION)
     print("session_exists", SESSION.exists())
     return 0
@@ -361,10 +453,12 @@ def main() -> int:
         help="path to certificate PEM sent in the sign request",
     )
     sub = ap.add_subparsers(dest="cmd", required=True)
-    sub.add_parser("config", help="show client id/secret source").set_defaults(
+    sub.add_parser("config", help="show OAuth config with client secret redacted").set_defaults(
         func=cmd_show_config
     )
     p_r = sub.add_parser("refresh", help="refresh access_token")
+    p_r.add_argument("--verbose", action="store_true", help="打印脱敏后的响应文本")
+    p_r.add_argument("--json", action="store_true", help="输出机器可读 JSON")
     p_r.set_defaults(func=cmd_refresh)
     p_p = sub.add_parser("probe", help="probe card list endpoints with bearer token")
     p_p.add_argument("--refresh-first", action="store_true")
@@ -373,7 +467,14 @@ def main() -> int:
     p_s.add_argument("--digest", default=None, help="64-hex SHA-256 digest to sign")
     p_s.add_argument("--file", default=None, help="sign SHA-256 of this file")
     p_s.add_argument("--refresh-first", action="store_true")
+    p_s.add_argument("--json", action="store_true", help="输出机器可读 JSON")
     p_s.set_defaults(func=cmd_sign)
+    p_v = sub.add_parser("verify", help="verify a cloud signature over a digest")
+    p_v.add_argument("--digest", default=None, help="64-hex SHA-256 digest")
+    p_v.add_argument("--file", default=None, help="verify SHA-256 of this file")
+    p_v.add_argument("--signature", required=True, help="signature hex or @file")
+    p_v.add_argument("--cert", default=None, help="PEM certificate path or inline PEM")
+    p_v.set_defaults(func=cmd_verify)
     args = ap.parse_args()
     return args.func(args)
 

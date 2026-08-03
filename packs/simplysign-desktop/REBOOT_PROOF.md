@@ -1,5 +1,19 @@
 # 重启后免 OTP — 实施路径
 
+## 更新（2026-08-03 续）：双保险达成「首次 OTP 后永久无人值守」
+
+- `refresh_token` **不能**作为唯一依赖：Certum 可随时吊销，无法保证永久无人值守。
+- 保底层：TOTP 种子存 macOS 钥匙串
+  （service `easy-rev-simplysign-totp`，写入走 `security -i` stdin，不落盘不入库）。
+- 会话死后：`auto-recover.sh` 自动触发登录框并键入钥匙串生成的 OTP
+  （`totp-keychain.py type --check`）。
+- 达成条件（均为一次性配置）：
+  1. 种子已导入钥匙串（`pbpaste | totp-keychain.py store`）；
+  2. 系统设置 → 隐私与安全性 → 辅助功能，勾选运行脚本的终端/Codex；
+  3. Mac 保持登录态，钥匙串解锁。
+- 在此条件下，「重启/断会话后完全免手输 OTP」成立；否则退化为
+  keepalive 通知人工输一次 OTP。
+
 ## 为什么正式版做不到“直接挖 token”
 
 - `/Applications/SimplySign Desktop.app` 开启了 **Hardened Runtime**

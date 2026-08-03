@@ -1,5 +1,64 @@
 # Findings — SimplySign Desktop 2.10.22
 
+## OTP 登录换 token 实测打通（2026-08-03 深夜）
+
+纯 HTTP 复刻 CAS + OAuth 登录链（无浏览器、无 Desktop），**真实 OTP 验证通过**：
+
+```text
+1) GET /idp/oauth2.0/authorize
+     ?client_id=44rvDKKEWY53a7xBeF5w&response_type=code&redirect_uri=…&client_name=CasOAuthClient
+   → 302 /idp/login?service=<encoded callbackAuthorize>
+   → 200 登录表单（hidden: execution, _eventId=submit, username, password）
+2) POST /idp/login?service=…
+     username=<邮箱>&password=<OTP>&execution=…&_eventId=submit
+   → 真实 OTP：302 callbackAuthorize?ticket=ST-… → 302 redirect/?code=OC-…
+   → 假 OTP：HTTP 401 + CAS 登录页（表单结构已被接受）
+3) POST /idp/oauth2.0/accessToken
+     grant_type=authorization_code&client_id=…&client_secret=…&redirect_uri=…&code=OC-…
+   → {access_token, refresh_token, expires_in:1800}（refresh_token 不轮转）
+```
+
+实现：`protocol/otp_login.py`（`--probe` / `--write-session` / `--discover-card`）。
+此前浏览器路径在 authorize 一步失败（跳 marketing），纯 HTTP 客户端带 cookie jar
+可以走通——差异在会话 cookie 处理。
+
+卡片发现（2026-08-03 实测）：
+
+```text
+POST /card/v1/cards/tasks → 202 {atom:link}
+→ poll → [{"profile":"C","label":"Code Signing","cardno":"<redacted-cardno>",
+           "pinrequired":false,"validthru":"<redacted-validity>"}]
+```
+
+`cardno` 即业务侧 `SIMPLYSIGN_CARD_ID`。session.json（600）已写入 card_id。
+
+协议闭环实测状态：
+
+- `client.py refresh` 续期：✅ 通过（脱敏 JSON，access_token 轮换，expires_in 1800）；
+- `client.py sign`：✅ 通过（2026-08-03 实测：multipart 202 → task poll →
+  RSA 512B 签名，`verify` 公钥校验 `signature_ok: true`）。
+- leaf 证书从受保护的本地会话目录读取，证书文件和导出路径均不进公开仓库。
+
+证书信息：subject、serial 和有效期均已脱敏；issuer 为公开 CA 信息。
+
+## TOTP 种子 → macOS 钥匙串（2026-08-03 续）
+
+需求：**首次 OTP 后永久无人值守**。
+
+- `refresh_token` 只能作快速层：Certum 可随时吊销它，无法作为永久保证。
+- 保底层 = 保留 TOTP 种子（RFC 6238，与 SimplySign 移动令牌同源）。
+- 6 位验证码**不可反推**种子；种子只能从激活 QR / `otpauth://` URI 一次性获取，
+  或经账户安全设置「重置并重新绑定移动令牌」重新取得。
+- 落地：种子写入本机 macOS 登录钥匙串，service `easy-rev-simplysign-totp`，
+  account 默认 `simplysign`（可传 Certum 邮箱）。
+- 写入用 `security -i`（stdin 解析），种子不经过命令行参数、不落盘、
+  不入库、不进 CI；脚本全程不打印种子。
+- 自动恢复链：`session-keepalive.sh` → `auto-recover.sh` →
+  `client.py refresh`（尽力而为）→ `totp-keychain.py type --check`
+  （钥匙串 OTP 自动键入并复探 PKCS）。
+- 前提：钥匙串已有种子（一次性导入）+ 辅助功能已授权 + Mac 保持登录态。
+- 会话目录权限已收紧为 600（`client_credentials.json` / `raw_events.jsonl` 等）。
+
 ## 2026-08-03 实测闭环（headless 签名）
 
 状态：**refresh + sign 已无 Desktop 验证通过**（详情见 `protocol/PROTOCOL.md`）。
@@ -21,7 +80,7 @@
 
 ### 结论
 
-拿到 `refresh_token` 后 CI 可完全无 OTP 签名；Desktop 仅用于首次登录换取 token。
+拿到 `refresh_token` 后，受控的自动化环境可无 OTP 签名；Desktop 仅用于首次登录换取 token。
 
 ## Binary
 

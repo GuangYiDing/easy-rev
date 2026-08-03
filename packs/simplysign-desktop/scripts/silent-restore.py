@@ -7,6 +7,7 @@ Phase 2: (next) inject into debug Desktop / headless sign API.
 from __future__ import annotations
 
 import json
+import re
 import ssl
 import sys
 import urllib.parse
@@ -17,6 +18,15 @@ SESSION = Path.home() / "Library/Application Support/easy-rev/simplysign-session
 TOKEN_URL = "https://cloudsign.webnotarius.pl/idp/oauth2.0/accessToken"
 # fallback public client_id observed in OAuth authorize URL cache
 DEFAULT_CLIENT_ID = "44rvDKKEWY53a7xBeF5w"
+
+
+def redact(text: str, max_len: int = 400) -> str:
+    masked = re.sub(
+        r'"(access_token|refresh_token|client_secret)"\s*:\s*"[^"]*"',
+        r'"\1":"<redacted>"',
+        text,
+    )
+    return masked[:max_len] + ("…" if len(masked) > max_len else "")
 
 
 def main() -> int:
@@ -53,7 +63,7 @@ def main() -> int:
         with urllib.request.urlopen(req, context=ctx, timeout=30) as resp:
             raw = resp.read().decode()
             print("refresh status", resp.status)
-            print(raw[:500])
+            print(redact(raw))
             parsed = json.loads(raw) if raw.startswith("{") else {}
             # CAS-style may return form
     except Exception as e:
@@ -63,7 +73,7 @@ def main() -> int:
         except Exception:
             err = str(err)
         print("refresh FAILED:", e)
-        print(err[:800])
+        print(redact(err, 800))
         print("若 refresh 被拒，说明云端仍要求交互 OTP，无法纯静默续期。")
         return 2
 

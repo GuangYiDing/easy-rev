@@ -61,6 +61,27 @@ libSimplySignPKCS.dylib  ──shm──▶  SimplySign Desktop
 https://cloudsign.webnotarius.pl/redirect/?code=OC-…
 ```
 
+### 1.1.5 OTP 登录 HTTP 链（2026-08-03 实测打通，替代 WebView）
+
+不需要浏览器/Desktop，纯 HTTP 即可完成 OTP 登录换取 token
+（实现：`otp_login.py`，仅依赖 Python 标准库）：
+
+```text
+1) GET /idp/oauth2.0/authorize?client_id=…&response_type=code&redirect_uri=…&client_name=CasOAuthClient
+   → 302 /idp/login?service=<encoded callbackAuthorize> → 200 表单
+     （hidden: execution, _eventId=submit, username, password；lt 可空）
+2) POST /idp/login?service=…  username=<邮箱>&password=<OTP>&execution=…&_eventId=submit
+   → 302 /idp/oauth2.0/callbackAuthorize?…&ticket=ST-…
+   → 302 https://cloudsign.webnotarius.pl/redirect/?code=OC-…
+   （OTP 错误 → HTTP 401 + 登录页）
+3) POST /idp/oauth2.0/accessToken
+   grant_type=authorization_code&client_id=…&client_secret=…&redirect_uri=…&code=OC-…
+   → {access_token, refresh_token, expires_in:1800}
+```
+
+要点：必须保持 cookie jar；callbackAuthorize 后继续手动跟随一跳直到
+`code=OC-…`。浏览器扩展之前在此失败，纯 HTTP 客户端实测成功。
+
 ### 1.2 Refresh（无 OTP，若服务端允许）
 
 已实测（2026-08-03）：
@@ -235,7 +256,6 @@ Code Signing 云卡本机为 **pinless**（占位 PIN `0000`），日常 Authent
 | B | SSLKEYLOG + pcap 捕获一次登录+签名，补全 method/字段 | 脚本已备 |
 | C | 验证 `refresh_token` 可否无 UI 换票 | `silent-restore.py` |
 | D | 纯 Python 实现 list-cards / sign-hash | `client.py` 骨架 |
-| E | CI 直接调 API，摆脱 Desktop 进程 | 依赖 C 成功 |
 
 **若 C 失败**：协议仍可文档化，但自动化必须保留 Desktop 会话或 TOTP 自动登录。
 
@@ -258,4 +278,4 @@ packs/simplysign-desktop/scripts/capture-protocol-once.sh
 
 ## 6. 合规
 
-仅用于自有证书与授权 CI。`captures/`、`session.json`、`sslkeys.log` 含高敏感凭证，默认 gitignore。
+仅用于自有证书与授权签名自动化。`captures/`、`session.json`、`sslkeys.log` 含高敏感凭证，默认 gitignore。
